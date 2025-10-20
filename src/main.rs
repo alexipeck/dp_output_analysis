@@ -56,10 +56,19 @@ struct InfectionStateMap {
     pub ignored_sites: Box<[(u32, u32)]>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct MortalityMap {
+    pub timestep: u32,
+    pub width: u32,
+    pub height: u32,
+    pub data: Box<[u32]>,
+}
+
 #[derive(Default)]
 struct MapGrouping {
     foi: Option<F64Map>,
     infection: Option<InfectionStateMap>,
+    mortality: Option<MortalityMap>,
 }
 
 struct CombinedState {
@@ -70,6 +79,7 @@ struct CombinedState {
     healthy_sites: Box<[(u32, u32)]>,
     infected_sites: Box<[(u32, u32)]>,
     ignored_sites: Box<[(u32, u32)]>,
+    mortality_data: Box<[u32]>,
 }
 
 pub fn euclidean_distance(a: &(usize, usize), b: &(usize, usize)) -> f64 {
@@ -118,6 +128,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     }
     let foi_dir = args.dir.join("foi");
     let infection_dir = args.dir.join("infection");
+    let mortality_dir = args.dir.join("mortality");
     if !foi_dir.is_dir() {
         return Err(format!("Missing subdirectory: {}", foi_dir.display()).into());
     }
@@ -155,6 +166,21 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         .collect();
     infection_files.sort_by(|a, b| compare_paths_natural(a, b));
 
+    let mut mortality_files: Vec<PathBuf> = WalkDir::new(&mortality_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+        .filter(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.chars().all(|c| c.is_ascii_digit()))
+                .unwrap_or(false)
+        })
+        .collect();
+    mortality_files.sort_by(|a, b| compare_paths_natural(a, b));
+
     let mut by_timestep: HashMap<u32, MapGrouping> = HashMap::new();
     for path in foi_files {
         let bytes = fs::read(&path)?;
@@ -182,16 +208,38 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    for path in mortality_files {
+        let bytes = fs::read(&path)?;
+        match bincode::deserialize::<MortalityMap>(&bytes) {
+            Ok(map) => {
+                let timestep = map.timestep;
+                let entry = by_timestep.entry(timestep).or_default();
+                entry.mortality = Some(map);
+            }
+            Err(err) => {
+                eprintln!("ERR {} {}", path.display(), err);
+            }
+        }
+    }
     let mut combined: BTreeMap<u32, CombinedState> = BTreeMap::new();
     for (timestep, group) in by_timestep.into_iter() {
-        if let (Some(foi), Some(infection)) = (group.foi, group.infection) {
-            if foi.timestep != timestep || infection.timestep != timestep {
+        if let (Some(foi), Some(infection), Some(mortality)) =
+            (group.foi, group.infection, group.mortality)
+        {
+            if foi.timestep != timestep
+                || infection.timestep != timestep
+                || mortality.timestep != timestep
+            {
                 return Err(format!("Mismatched timestep for ts {}", timestep).into());
             }
-            if foi.width != infection.width || foi.height != infection.height {
+            if foi.width != infection.width
+                || foi.height != infection.height
+                || foi.width != mortality.width
+                || foi.height != mortality.height
+            {
                 return Err(format!(
-                    "Mismatched dimensions at ts {}: foi {}x{} vs infection {}x{}",
-                    timestep, foi.width, foi.height, infection.width, infection.height
+                    "Mismatched dimensions at ts {}: foi {}x{} vs infection {}x{} vs mortality {}x{}",
+                    timestep, foi.width, foi.height, infection.width, infection.height, mortality.width, mortality.height
                 )
                 .into());
             }
@@ -205,6 +253,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     healthy_sites: infection.healthy_sites,
                     infected_sites: infection.infected_sites,
                     ignored_sites: infection.ignored_sites,
+                    mortality_data: mortality.data,
                 },
             );
         }
@@ -232,6 +281,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         worksheet.write_string(0, 16, "inf_95th_p_mean_dist_m")?; //infection_mean_distance_of_95th_percentile_from_source
         worksheet.write_string(0, 17, "inf_99th_p_spread_mpy")?; //infection spread rate in meters per year from 99th percentile
         worksheet.write_string(0, 18, "inf_95th_p_spread_mpy")?; //infection spread rate in meters per year from 95th percentile
+        worksheet.write_string(0, 19, "annual_mortality")?; //annual mortality
         let mut row: u32 = 1;
         let mut previous_number_of_infected_sites: usize = 0;
         let mut previous_infected_area: f64 = 0.0;
@@ -311,20 +361,6 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 let mut infection_95th_percentile_spread_rate_mpy =
                     infection_95th_percentile_mean_distance_from_source
                         - previous_infection_95th_percentile_mean_distance_from_source;
-                //if infection_99th_percentile_spread_rate_mpy.is_sign_negative() {
-                println!(
-                    "99: timestep: {timestep}, {infection_99th_percentile_mean_distance_from_source} - {previous_infection_99th_percentile_mean_distance_from_source} = {infection_99th_percentile_spread_rate_mpy}",
-                    timestep = state.timestep,
-                );
-                //infection_99th_percentile_spread_rate_mpy = 0.0;
-                //}
-                //if infection_95th_percentile_spread_rate_mpy.is_sign_negative() {
-                println!(
-                    "95: timestep: {timestep}, {infection_95th_percentile_mean_distance_from_source} - {previous_infection_95th_percentile_mean_distance_from_source} = {infection_95th_percentile_spread_rate_mpy}",
-                    timestep = state.timestep,
-                );
-                //infection_95th_percentile_spread_rate_mpy = 0.0;
-                //}
                 previous_infection_99th_percentile_mean_distance_from_source =
                     infection_99th_percentile_mean_distance_from_source;
                 previous_infection_95th_percentile_mean_distance_from_source =
@@ -398,6 +434,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             }
             previous_infected_area = infected_area;
 
+            let annual_mortality = state.mortality_data.iter().sum::<u32>() as f64;
+
             //write to xlsx row
             worksheet.write_number(row, 0, state.timestep as f64)?;
             worksheet.write_number(row, 1, total_number_of_infected_sites as f64)?;
@@ -418,6 +456,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             worksheet.write_number(row, 16, infection_95th_percentile_mean_distance_from_source)?;
             worksheet.write_number(row, 17, infection_99th_percentile_spread_rate_mpy)?;
             worksheet.write_number(row, 18, infection_95th_percentile_spread_rate_mpy)?;
+            worksheet.write_number(row, 19, annual_mortality)?;
             row += 1;
         }
 
