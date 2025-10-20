@@ -1,7 +1,7 @@
 use clap::Parser;
-use rust_xlsxwriter::Workbook;
+use rust_xlsxwriter::{Color, ConditionalFormatCell, ConditionalFormatCellRule, Format, Workbook};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::path::PathBuf;
 use std::{fs, io};
@@ -388,6 +388,33 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             worksheet.write_number(row, 16, infection_95th_percentile_mean_distance_from_source)?;
             row += 1;
         }
+
+        let red_format = Format::new().set_background_color(Color::RGB(0xFFC7CE));
+        let green_format = Format::new().set_background_color(Color::RGB(0xC6EFCE));
+        let neutral_format = Format::new().set_background_color(Color::RGB(0xFFEB9C));
+
+        let negative_condition = ConditionalFormatCell::new()
+            .set_rule(ConditionalFormatCellRule::LessThan(0.0))
+            .set_format(red_format);
+
+        let positive_condition = ConditionalFormatCell::new()
+            .set_rule(ConditionalFormatCellRule::GreaterThan(0.0))
+            .set_format(green_format);
+
+        let zero_condition = ConditionalFormatCell::new()
+            .set_rule(ConditionalFormatCellRule::EqualTo(0.0))
+            .set_format(neutral_format);
+
+        //inf_new_change
+        worksheet.add_conditional_format(1, 4, row - 1, 4, &negative_condition)?;
+        worksheet.add_conditional_format(1, 4, row - 1, 4, &positive_condition)?;
+        worksheet.add_conditional_format(1, 4, row - 1, 4, &zero_condition)?;
+
+        //inf_area_change
+        //worksheet.add_conditional_format(1, 7, row - 1, 7, &negative_condition)?;
+        //worksheet.add_conditional_format(1, 7, row - 1, 7, &positive_condition)?;
+        //worksheet.add_conditional_format(1, 7, row - 1, 7, &zero_condition)?;
+
         workbook.save(&args.output)?;
     }
 
