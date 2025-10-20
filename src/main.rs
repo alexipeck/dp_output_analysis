@@ -196,17 +196,19 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         worksheet.write_string(0, 1, "inf_total")?; //total_number_of_infected_sites
         worksheet.write_string(0, 2, "inf_mean_dist")?; //infection_mean_distance_from_source
         worksheet.write_string(0, 3, "inf_new")?; //newly_infected_sites
-        worksheet.write_string(0, 4, "inf_new_change_mod")?; //newly_infected_sites_change_ratio
-        worksheet.write_string(0, 5, "inf_area")?; //infected_area
-        worksheet.write_string(0, 6, "inf_area_change_mod")?; //infection_area_change_ratio
-        worksheet.write_string(0, 7, "foi_99th_p")?; //foi_99th_percentile
-        worksheet.write_string(0, 8, "foi_95th_p")?; //foi_95th_percentile
-        worksheet.write_string(0, 9, "foi_99th_p_mean_dist")?; //foi_99th_percentile_mean_distance_from_source
-        worksheet.write_string(0, 10, "foi_95th_p_mean_dist")?; //foi_95th_percentile_mean_distance_from_source
-        worksheet.write_string(0, 11, "inf_99th_p")?; //infection_99th_percentile
-        worksheet.write_string(0, 12, "inf_95th_p")?; //infection_95th_percentile
-        worksheet.write_string(0, 13, "inf_99th_p_mean_dist")?; //infection_mean_distance_of_99th_percentile_from_source
-        worksheet.write_string(0, 14, "inf_95th_p_mean_dist")?; //infection_mean_distance_of_95th_percentile_from_source
+        worksheet.write_string(0, 4, "inf_new_change")?; //newly_infected_sites_change_ratio
+        worksheet.write_string(0, 5, "inf_new_change_mod")?; //newly_infected_sites_change_ratio
+        worksheet.write_string(0, 6, "inf_area")?; //infected_area
+        worksheet.write_string(0, 7, "inf_area_change")?;
+        worksheet.write_string(0, 8, "inf_area_change_mod")?; //infection_area_change_ratio
+        worksheet.write_string(0, 9, "foi_99th_p")?; //foi_99th_percentile
+        worksheet.write_string(0, 10, "foi_95th_p")?; //foi_95th_percentile
+        worksheet.write_string(0, 11, "foi_99th_p_mean_dist")?; //foi_99th_percentile_mean_distance_from_source
+        worksheet.write_string(0, 12, "foi_95th_p_mean_dist")?; //foi_95th_percentile_mean_distance_from_source
+        worksheet.write_string(0, 13, "inf_99th_p")?; //infection_99th_percentile
+        worksheet.write_string(0, 14, "inf_95th_p")?; //infection_95th_percentile
+        worksheet.write_string(0, 15, "inf_99th_p_mean_dist")?; //infection_mean_distance_of_99th_percentile_from_source
+        worksheet.write_string(0, 16, "inf_95th_p_mean_dist")?; //infection_mean_distance_of_95th_percentile_from_source
         let mut row: u32 = 1;
         let mut previous_number_of_infected_sites: usize = 0;
         let mut previous_infected_area: f64 = 0.0;
@@ -335,11 +337,15 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             //newly infected sites
             let newly_infected_sites: usize =
                 state.infected_sites.len() - previous_number_of_infected_sites;
-            let newly_infected_sites_change_ratio = if previous_newly_infected_sites > 0 {
-                newly_infected_sites as f64 / previous_newly_infected_sites as f64
-            } else {
-                1.0
-            };
+            let (newly_infected_sites_change_modifier, newly_infected_sites_change) =
+                if previous_newly_infected_sites > 0 {
+                    (
+                        newly_infected_sites as f64 / previous_newly_infected_sites as f64,
+                        newly_infected_sites as f64 - previous_newly_infected_sites as f64,
+                    )
+                } else {
+                    (1.0, 0.0)
+                };
             previous_newly_infected_sites = newly_infected_sites;
             previous_number_of_infected_sites = state.infected_sites.len();
 
@@ -348,13 +354,17 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             //infected area
             let infected_area = state.infected_sites.len() as f64
                 / (state.width as usize * state.height as usize) as f64;
-            let mut infection_area_change_ratio = if previous_infected_area > 0.0 {
-                infected_area / previous_infected_area
-            } else {
-                1.0
-            };
-            if infection_area_change_ratio.is_infinite() {
-                infection_area_change_ratio = 1.0;
+            let (infection_area_change_modifier, infection_area_change) =
+                if previous_infected_area > 0.0 {
+                    (
+                        infected_area / previous_infected_area,
+                        infected_area - previous_infected_area,
+                    )
+                } else {
+                    (1.0, 0.0)
+                };
+            if infection_area_change_modifier.is_infinite() {
+                panic!("infection_area_change_modifier is infinite");
             }
             previous_infected_area = infected_area;
 
@@ -363,17 +373,19 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             worksheet.write_number(row, 1, total_number_of_infected_sites as f64)?;
             worksheet.write_number(row, 2, infection_mean_distance_from_source)?;
             worksheet.write_number(row, 3, newly_infected_sites as f64)?;
-            worksheet.write_number(row, 4, newly_infected_sites_change_ratio)?;
-            worksheet.write_number(row, 5, infected_area)?;
-            worksheet.write_number(row, 6, infection_area_change_ratio)?;
-            worksheet.write_number(row, 7, foi_99th_percentile)?;
-            worksheet.write_number(row, 8, foi_95th_percentile)?;
-            worksheet.write_number(row, 9, foi_99th_percentile_mean_distance_from_source)?;
-            worksheet.write_number(row, 10, foi_95th_percentile_mean_distance_from_source)?;
-            worksheet.write_number(row, 11, infection_99th_percentile)?;
-            worksheet.write_number(row, 12, infection_95th_percentile)?;
-            worksheet.write_number(row, 13, infection_99th_percentile_mean_distance_from_source)?;
-            worksheet.write_number(row, 14, infection_95th_percentile_mean_distance_from_source)?;
+            worksheet.write_number(row, 4, newly_infected_sites_change)?;
+            worksheet.write_number(row, 5, newly_infected_sites_change_modifier)?;
+            worksheet.write_number(row, 6, infected_area)?;
+            worksheet.write_number(row, 7, infection_area_change)?;
+            worksheet.write_number(row, 8, infection_area_change_modifier)?;
+            worksheet.write_number(row, 9, foi_99th_percentile)?;
+            worksheet.write_number(row, 10, foi_95th_percentile)?;
+            worksheet.write_number(row, 11, foi_99th_percentile_mean_distance_from_source)?;
+            worksheet.write_number(row, 12, foi_95th_percentile_mean_distance_from_source)?;
+            worksheet.write_number(row, 13, infection_99th_percentile)?;
+            worksheet.write_number(row, 14, infection_95th_percentile)?;
+            worksheet.write_number(row, 15, infection_99th_percentile_mean_distance_from_source)?;
+            worksheet.write_number(row, 16, infection_95th_percentile_mean_distance_from_source)?;
             row += 1;
         }
         workbook.save(&args.output)?;
