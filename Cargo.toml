@@ -1,0 +1,11 @@
+[package]
+name = "dp_output_analysis"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.49", features = ["derive"] }
+walkdir = "2.5.0"
+serde = { version = "1.0.228", features = ["derive"] }
+bincode = "1.3.3"
+rust_xlsxwriter = "0.90.2"
