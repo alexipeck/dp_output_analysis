@@ -1,15 +1,13 @@
 use clap::Parser;
 use rust_xlsxwriter::Workbook;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::path::PathBuf;
 use std::{fs, io};
 use walkdir::WalkDir;
 
-use crate::top_percentile::{F64Ord, TopPercentile};
-
-pub mod top_percentile;
+use std::cmp::Ordering;
 
 fn parse_xlsx_path(s: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(s);
@@ -154,8 +152,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         let bytes = fs::read(&path)?;
         match bincode::deserialize::<InfectionStateMap>(&bytes) {
             Ok(map) => {
-                let ts = map.timestep;
-                let entry = by_timestep.entry(ts).or_default();
+                let timestep = map.timestep;
+                let entry = by_timestep.entry(timestep).or_default();
                 entry.infection = Some(map);
             }
             Err(err) => {
@@ -164,22 +162,22 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         }
     }
     let mut combined: BTreeMap<u32, CombinedState> = BTreeMap::new();
-    for (ts, group) in by_timestep.into_iter() {
+    for (timestep, group) in by_timestep.into_iter() {
         if let (Some(foi), Some(infection)) = (group.foi, group.infection) {
-            if foi.timestep != ts || infection.timestep != ts {
-                return Err(format!("Mismatched timestep for ts {}", ts).into());
+            if foi.timestep != timestep || infection.timestep != timestep {
+                return Err(format!("Mismatched timestep for ts {}", timestep).into());
             }
             if foi.width != infection.width || foi.height != infection.height {
                 return Err(format!(
                     "Mismatched dimensions at ts {}: foi {}x{} vs infection {}x{}",
-                    ts, foi.width, foi.height, infection.width, infection.height
+                    timestep, foi.width, foi.height, infection.width, infection.height
                 )
                 .into());
             }
             combined.insert(
-                ts,
+                timestep,
                 CombinedState {
-                    timestep: ts,
+                    timestep,
                     width: foi.width,
                     height: foi.height,
                     foi_data: foi.data,
@@ -195,73 +193,144 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         let mut workbook = Workbook::new();
         let worksheet = workbook.add_worksheet();
         worksheet.write_string(0, 0, "timestep")?;
-        worksheet.write_string(0, 1, "average_distance_from_source")?;
-        worksheet.write_string(0, 2, "newly_infected_sites")?;
-        worksheet.write_string(0, 3, "newly_infected_sites_change_ratio")?;
-        worksheet.write_string(0, 4, "infected_area")?;
-        worksheet.write_string(0, 5, "infection_area_change_ratio")?;
-        worksheet.write_string(0, 6, "foi_99th_percentile")?;
-        worksheet.write_string(0, 7, "foi_95th_percentile")?;
+        worksheet.write_string(0, 1, "inf_total")?; //total_number_of_infected_sites
+        worksheet.write_string(0, 2, "inf_mean_dist")?; //infection_mean_distance_from_source
+        worksheet.write_string(0, 3, "inf_new")?; //newly_infected_sites
+        worksheet.write_string(0, 4, "inf_new_change_mod")?; //newly_infected_sites_change_ratio
+        worksheet.write_string(0, 5, "inf_area")?; //infected_area
+        worksheet.write_string(0, 6, "inf_area_change_mod")?; //infection_area_change_ratio
+        worksheet.write_string(0, 7, "foi_99th_p")?; //foi_99th_percentile
+        worksheet.write_string(0, 8, "foi_95th_p")?; //foi_95th_percentile
+        worksheet.write_string(0, 9, "foi_99th_p_mean_dist")?; //foi_99th_percentile_mean_distance_from_source
+        worksheet.write_string(0, 10, "foi_95th_p_mean_dist")?; //foi_95th_percentile_mean_distance_from_source
+        worksheet.write_string(0, 11, "inf_99th_p")?; //infection_99th_percentile
+        worksheet.write_string(0, 12, "inf_95th_p")?; //infection_95th_percentile
+        worksheet.write_string(0, 13, "inf_99th_p_mean_dist")?; //infection_mean_distance_of_99th_percentile_from_source
+        worksheet.write_string(0, 14, "inf_95th_p_mean_dist")?; //infection_mean_distance_of_95th_percentile_from_source
         let mut row: u32 = 1;
         let mut previous_number_of_infected_sites: usize = 0;
         let mut previous_infected_area: f64 = 0.0;
         let mut previous_newly_infected_sites: usize = 0;
         for (_, state) in combined.into_iter() {
-            //percentile
-            let (foi_99th_percentile, foi_95th_percentile) = {
-                let mut foi_99th_percentile: TopPercentile<F64Ord, (usize, usize)> =
-                    TopPercentile::new(0.99, state.foi_data.len());
-                let mut foi_95th_percentile: TopPercentile<F64Ord, (usize, usize)> =
-                    TopPercentile::new(0.95, state.foi_data.len());
-                for (i, foi) in state.foi_data.iter().enumerate() {
-                    foi_99th_percentile
-                        .insert(F64Ord(*foi), index_to_coordinates(i, state.width as usize));
-                    foi_95th_percentile
-                        .insert(F64Ord(*foi), index_to_coordinates(i, state.width as usize));
+            //validation
+            if state.foi_data.iter().any(|v| v.is_nan()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "NaN encountered in foi_data",
+                )
+                .into());
+            }
+
+            let infection_source: (usize, usize) = (x, y);
+            let infection_distances = {
+                let mut map: HashMap<(usize, usize), f64> = HashMap::new();
+                for &(x, y) in state.infected_sites.iter() {
+                    let site = (x as usize, y as usize);
+                    let distance = euclidean_distance(&infection_source, &site) * cd;
+                    //exclude initial infection point
+                    if distance > 0.0 {
+                        map.insert(site, distance);
+                    }
                 }
-                let foi_99th_percentile = foi_99th_percentile
-                    .smallest_primary()
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            "not enough values inserted to derive 99th percentile",
-                        )
-                    })?
-                    .0
-                    .0;
-                let foi_95th_percentile = foi_95th_percentile
-                    .smallest_primary()
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            "not enough values inserted to derive 95th percentile",
-                        )
-                    })?
-                    .0
-                    .0;
-                (foi_99th_percentile, foi_95th_percentile)
+                map
             };
 
-            //mean distance from source
-            let infection_source: (usize, usize) = (x, y);
-            let mut cumulative_distance_from_source: f64 = 0.0;
-            let mut total_non_source_sites: usize = 0;
-            for site in state.infected_sites.iter() {
-                let site = (site.0 as usize, site.1 as usize);
-                let distance = euclidean_distance(&infection_source, &site) * cd;
-                if distance > 0.0 {
-                    cumulative_distance_from_source += distance;
-                    total_non_source_sites += 1;
+            let foi_99th_percentile = percentile_nearest(&state.foi_data, 0.99)?;
+            let foi_95th_percentile = percentile_nearest(&state.foi_data, 0.95)?;
+
+            let infection_99th_percentile = {
+                let values = infection_distances.values().copied().collect::<Vec<f64>>();
+                if values.len() == 0 {
+                    0.0
+                } else {
+                    percentile_nearest(&values, 0.99)?
                 }
-            }
-            let mut mean_distance_from_source = if total_non_source_sites > 0 {
-                cumulative_distance_from_source / total_non_source_sites as f64
-            } else {
-                0.0
             };
-            if mean_distance_from_source.is_nan() {
-                mean_distance_from_source = 0.0;
-            }
+            let infection_95th_percentile = {
+                let values = infection_distances.values().copied().collect::<Vec<f64>>();
+                if values.len() == 0 {
+                    0.0
+                } else {
+                    percentile_nearest(&values, 0.95)?
+                }
+            };
+            let infection_mean_distance_from_source = {
+                let iter = infection_distances
+                    .values()
+                    .filter(|&distance| *distance > 0.0);
+                let count = iter.clone().count();
+                let distance_sum = iter.sum::<f64>();
+                if count == 0 {
+                    0.0
+                } else {
+                    distance_sum / count as f64
+                }
+            };
+
+            let infection_99th_percentile_mean_distance_from_source = {
+                let iter = infection_distances
+                    .values()
+                    .filter(|&distance| *distance > 0.0 && *distance >= infection_99th_percentile);
+                let count = iter.clone().count();
+                let distance_sum = iter.sum::<f64>();
+                if count == 0 {
+                    0.0
+                } else {
+                    distance_sum / count as f64
+                }
+            };
+
+            let infection_95th_percentile_mean_distance_from_source = {
+                let iter = infection_distances
+                    .values()
+                    .filter(|&distance| *distance > 0.0 && *distance >= infection_95th_percentile);
+                let count = iter.clone().count();
+                let distance_sum = iter.sum::<f64>();
+                if count == 0 {
+                    0.0
+                } else {
+                    distance_sum / count as f64
+                }
+            };
+
+            let (foi_entries_above_99th_percentile, foi_entries_above_95th_percentile) = {
+                let mut foi_entries_above_99th_percentile = Vec::new();
+                let mut foi_entries_above_95th_percentile = Vec::new();
+                for (index, foi) in state.foi_data.iter().enumerate() {
+                    if foi >= &foi_99th_percentile || foi >= &foi_95th_percentile {
+                        let coordinates = index_to_coordinates(index, state.width as usize);
+                        let distance = euclidean_distance(&infection_source, &coordinates) * cd;
+                        if distance == 0.0 {
+                            continue;
+                        }
+                        if foi >= &foi_99th_percentile {
+                            foi_entries_above_99th_percentile.push(distance);
+                        }
+                        if foi >= &foi_95th_percentile {
+                            foi_entries_above_95th_percentile.push(distance);
+                        }
+                    }
+                }
+                (
+                    foi_entries_above_99th_percentile,
+                    foi_entries_above_95th_percentile,
+                )
+            };
+
+            let foi_99th_percentile_mean_distance_from_source =
+                if foi_entries_above_99th_percentile.is_empty() || foi_99th_percentile == 0.0 {
+                    0.0
+                } else {
+                    foi_entries_above_99th_percentile.iter().sum::<f64>()
+                        / foi_entries_above_99th_percentile.len() as f64
+                };
+            let foi_95th_percentile_mean_distance_from_source =
+                if foi_entries_above_95th_percentile.is_empty() || foi_95th_percentile == 0.0 {
+                    0.0
+                } else {
+                    foi_entries_above_95th_percentile.iter().sum::<f64>()
+                        / foi_entries_above_95th_percentile.len() as f64
+                };
 
             //newly infected sites
             let newly_infected_sites: usize =
@@ -273,6 +342,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             };
             previous_newly_infected_sites = newly_infected_sites;
             previous_number_of_infected_sites = state.infected_sites.len();
+
+            let total_number_of_infected_sites = state.infected_sites.len();
 
             //infected area
             let infected_area = state.infected_sites.len() as f64
@@ -289,13 +360,20 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
 
             //write to xlsx row
             worksheet.write_number(row, 0, state.timestep as f64)?;
-            worksheet.write_number(row, 1, mean_distance_from_source)?;
-            worksheet.write_number(row, 2, newly_infected_sites as f64)?;
-            worksheet.write_number(row, 3, newly_infected_sites_change_ratio)?;
-            worksheet.write_number(row, 4, infected_area)?;
-            worksheet.write_number(row, 5, infection_area_change_ratio)?;
-            worksheet.write_number(row, 6, foi_99th_percentile)?;
-            worksheet.write_number(row, 7, foi_95th_percentile)?;
+            worksheet.write_number(row, 1, total_number_of_infected_sites as f64)?;
+            worksheet.write_number(row, 2, infection_mean_distance_from_source)?;
+            worksheet.write_number(row, 3, newly_infected_sites as f64)?;
+            worksheet.write_number(row, 4, newly_infected_sites_change_ratio)?;
+            worksheet.write_number(row, 5, infected_area)?;
+            worksheet.write_number(row, 6, infection_area_change_ratio)?;
+            worksheet.write_number(row, 7, foi_99th_percentile)?;
+            worksheet.write_number(row, 8, foi_95th_percentile)?;
+            worksheet.write_number(row, 9, foi_99th_percentile_mean_distance_from_source)?;
+            worksheet.write_number(row, 10, foi_95th_percentile_mean_distance_from_source)?;
+            worksheet.write_number(row, 11, infection_99th_percentile)?;
+            worksheet.write_number(row, 12, infection_95th_percentile)?;
+            worksheet.write_number(row, 13, infection_99th_percentile_mean_distance_from_source)?;
+            worksheet.write_number(row, 14, infection_95th_percentile_mean_distance_from_source)?;
             row += 1;
         }
         workbook.save(&args.output)?;
@@ -327,4 +405,26 @@ fn trailing_number(s: &str) -> Option<u64> {
         return None;
     }
     s[i..].parse::<u64>().ok()
+}
+
+fn percentile_nearest(data: &[f64], q: f64) -> Result<f64, Box<dyn Error>> {
+    //validation
+    if data.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "empty data").into());
+    }
+    if !(0.0..=1.0).contains(&q) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "q out of range").into());
+    }
+
+    //calculate percentile
+    let mut buf: Vec<f64> = data.to_vec();
+    let n = buf.len();
+    let idx = if q >= 1.0 {
+        n - 1
+    } else {
+        (q * (n as f64 - 1.0)).round() as usize
+    };
+    let (_, nth, _) =
+        buf.select_nth_unstable_by(idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    Ok(*nth)
 }
