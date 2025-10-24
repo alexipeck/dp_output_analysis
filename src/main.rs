@@ -10,13 +10,8 @@ use walkdir::WalkDir;
 
 use std::cmp::Ordering;
 
-fn parse_xlsx_path(s: &str) -> Result<PathBuf, String> {
-    let path = PathBuf::from(s);
-    match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) if ext.eq_ignore_ascii_case("xlsx") => Ok(path),
-        _ => Err(String::from("output must have .xlsx extension")),
-    }
-}
+mod image_grid;
+use crate::image_grid::{GridRenderConfig, render_infection_state_png};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -28,8 +23,13 @@ fn parse_xlsx_path(s: &str) -> Result<PathBuf, String> {
 struct Args {
     #[arg(value_name = "DIR", required = true)]
     dir: PathBuf,
-    #[arg(short = 'o', long = "output", value_name = "OUTPUT", required = true, value_parser = parse_xlsx_path)]
-    output: PathBuf,
+    #[arg(
+        short = 'o',
+        long = "output-dir",
+        value_name = "OUTPUT_DIR",
+        required = true
+    )]
+    output_dir: PathBuf,
     #[arg(short = 'x', required = true)]
     x: usize,
     #[arg(short = 'y', required = true)]
@@ -74,18 +74,30 @@ struct MapGrouping {
     mortality: Option<MortalityMap>,
 }
 
+struct Foi {
+    data: Box<[f64]>,
+}
+
+struct Infection {
+    healthy_sites: Box<[(u32, u32)]>,
+    infected_sites: Box<[(u32, u32)]>,
+    ignored_sites: Box<[(u32, u32)]>,
+    healthy_biomass: Box<[u64]>,
+    infected_biomass: Box<[u64]>,
+    ignored_biomass: Box<[u64]>,
+}
+
+struct Mortality {
+    data: Box<[u32]>,
+}
+
 struct CombinedState {
     timestep: u32,
     width: u32,
     height: u32,
-    foi_data: Box<[f64]>,
-    healthy_sites: Box<[(u32, u32)]>,
-    infected_sites: Box<[(u32, u32)]>,
-    ignored_sites: Box<[(u32, u32)]>,
-    mortality_data: Box<[u32]>,
-    healthy_biomass: Box<[u64]>,
-    infected_biomass: Box<[u64]>,
-    ignored_biomass: Box<[u64]>,
+    foi: Option<Foi>,
+    infection: Option<Infection>,
+    mortality: Option<Mortality>,
 }
 
 pub fn euclidean_distance(a: &(usize, usize), b: &(usize, usize)) -> f64 {
@@ -106,14 +118,14 @@ where
     I::Item: Borrow<f64>,
 {
     let mut sum = 0.0f64;
-    let mut c = 0.0f64; // compensation
+    let mut compensation = 0.0f64;
     let mut n = 0usize;
 
-    for v in iter {
-        let x = *v.borrow(); // works for &f64 and f64
-        let y = x - c;
+    for value in iter {
+        let x = *value.borrow(); // works for &f64 and f64
+        let y = x - compensation;
         let t = sum + y;
-        c = (t - sum) - y;
+        compensation = (t - sum) - y;
         sum = t;
         n += 1;
     }
@@ -131,6 +143,9 @@ fn main() {
 fn run(args: Args) -> Result<(), Box<dyn Error>> {
     if !args.dir.is_dir() {
         return Err(format!("Not a directory: {}", args.dir.display()).into());
+    }
+    if !args.output_dir.exists() {
+        fs::create_dir_all(&args.output_dir)?;
     }
     let foi_dir = args.dir.join("foi");
     let infection_dir = args.dir.join("infection");
@@ -228,27 +243,49 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     }
     let mut combined: BTreeMap<u32, CombinedState> = BTreeMap::new();
     for (timestep, group) in by_timestep.into_iter() {
-        if let (Some(foi), Some(infection), Some(mortality)) =
-            (group.foi, group.infection, group.mortality)
-        {
-            if foi.timestep != timestep
-                || infection.timestep != timestep
-                || mortality.timestep != timestep
-            {
-                return Err(format!("Mismatched timestep for ts {}", timestep).into());
+        let mut combined_state = CombinedState {
+            timestep,
+            width: 0,
+            height: 0,
+            foi: None,
+            infection: None,
+            mortality: None,
+        };
+
+        if let Some(foi) = group.foi {
+            if foi.timestep != timestep {
+                return Err(format!("Mismatched timestep for foi at ts {}", timestep).into());
             }
-            if foi.width != infection.width
-                || foi.height != infection.height
-                || foi.width != mortality.width
-                || foi.height != mortality.height
+            combined_state.width = foi.width;
+            combined_state.height = foi.height;
+            combined_state.foi = Some(Foi { data: foi.data });
+        }
+
+        if let Some(infection) = group.infection {
+            if infection.timestep != timestep {
+                return Err(format!("Mismatched timestep for infection at ts {}", timestep).into());
+            }
+            if combined_state.width != 0
+                && (combined_state.width != infection.width
+                    || combined_state.height != infection.height)
             {
                 return Err(format!(
-                    "Mismatched dimensions at ts {}: foi {}x{} vs infection {}x{} vs mortality {}x{}",
-                    timestep, foi.width, foi.height, infection.width, infection.height, mortality.width, mortality.height
+                    "Mismatched dimensions at ts {}: existing {}x{} vs infection {}x{}",
+                    timestep,
+                    combined_state.width,
+                    combined_state.height,
+                    infection.width,
+                    infection.height
                 )
                 .into());
             }
-            if infection.healthy_biomass.len() != foi.width as usize * foi.height as usize {
+            if combined_state.width == 0 {
+                combined_state.width = infection.width;
+                combined_state.height = infection.height;
+            }
+            if infection.healthy_biomass.len()
+                != combined_state.width as usize * combined_state.height as usize
+            {
                 return Err(format!(
                     "Mismatched healthy_biomass length at ts {}: {}",
                     timestep,
@@ -272,23 +309,48 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 )
                 .into());
             }
-            combined.insert(
-                timestep,
-                CombinedState {
-                    timestep,
-                    width: foi.width,
-                    height: foi.height,
-                    foi_data: foi.data,
-                    healthy_sites: infection.healthy_sites,
-                    infected_sites: infection.infected_sites,
-                    ignored_sites: infection.ignored_sites,
-                    healthy_biomass: infection.healthy_biomass,
-                    infected_biomass: infection.infected_biomass,
-                    ignored_biomass: infection.ignored_biomass,
-                    mortality_data: mortality.data,
-                },
-            );
+            combined_state.infection = Some(Infection {
+                healthy_sites: infection.healthy_sites,
+                infected_sites: infection.infected_sites,
+                ignored_sites: infection.ignored_sites,
+                healthy_biomass: infection.healthy_biomass,
+                infected_biomass: infection.infected_biomass,
+                ignored_biomass: infection.ignored_biomass,
+            });
         }
+
+        if let Some(mortality) = group.mortality {
+            if mortality.timestep != timestep {
+                return Err(format!("Mismatched timestep for mortality at ts {}", timestep).into());
+            }
+            if combined_state.width != 0
+                && (combined_state.width != mortality.width
+                    || combined_state.height != mortality.height)
+            {
+                return Err(format!(
+                    "Mismatched dimensions at ts {}: existing {}x{} vs mortality {}x{}",
+                    timestep,
+                    combined_state.width,
+                    combined_state.height,
+                    mortality.width,
+                    mortality.height
+                )
+                .into());
+            }
+            if combined_state.width == 0 {
+                combined_state.width = mortality.width;
+                combined_state.height = mortality.height;
+            }
+            combined_state.mortality = Some(Mortality {
+                data: mortality.data,
+            });
+        }
+
+        if combined_state.width == 0 {
+            return Err(format!("No data available for timestep {}", timestep).into());
+        }
+
+        combined.insert(timestep, combined_state);
     }
     {
         let (x, y, cd) = (args.x, args.y, args.cd);
@@ -313,7 +375,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         worksheet.write_string(0, 16, "inf_95th_p_mean_dist_m")?; //infection_mean_distance_of_95th_percentile_from_source
         worksheet.write_string(0, 17, "inf_99th_p_spread_mpy")?; //infection spread rate in meters per year from 99th percentile
         worksheet.write_string(0, 18, "inf_95th_p_spread_mpy")?; //infection spread rate in meters per year from 95th percentile
-        worksheet.write_string(0, 19, "annual_mortality")?; //annual mortality
+        worksheet.write_string(0, 19, "t_annual_mortality")?; //annual mortality
         worksheet.write_string(0, 20, "t_hea_biomass")?; //total healthy biomass
         worksheet.write_string(0, 21, "t_inf_biomass")?; //total infected biomass
         worksheet.write_string(0, 22, "t_ign_biomass")?; //total ignored biomass
@@ -339,73 +401,112 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         let mut previous_total_infected_biomass: f64 = 0.0;
         let mut previous_total_ignored_biomass: f64 = 0.0;
         let mut previous_total_biomass: f64 = 0.0;
+        let mut mortality_values: Vec<f64> = Vec::new();
+        let mut img_time_sum_ms: u128 = 0;
+        let mut img_time_count: usize = 0;
         for (_, state) in combined.into_iter() {
-            //validation
-            if state.foi_data.iter().any(|v| v.is_nan()) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "NaN encountered in foi_data",
-                )
-                .into());
+            let infection_source: (usize, usize) = (x, y);
+
+            if let Some(foi) = &state.foi {
+                if foi.data.iter().any(|v| v.is_nan()) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "NaN encountered in foi_data",
+                    )
+                    .into());
+                }
+
+                let foi_99th_percentile = percentile_nearest(&foi.data, 0.99)?;
+                let foi_95th_percentile = percentile_nearest(&foi.data, 0.95)?;
+
+                let (foi_entries_above_99th_percentile, foi_entries_above_95th_percentile) = {
+                    let mut foi_entries_above_99th_percentile = Vec::new();
+                    let mut foi_entries_above_95th_percentile = Vec::new();
+                    for (index, foi_value) in foi.data.iter().enumerate() {
+                        if foi_value >= &foi_99th_percentile || foi_value >= &foi_95th_percentile {
+                            let coordinates = index_to_coordinates(index, state.width as usize);
+                            let distance = euclidean_distance(&infection_source, &coordinates) * cd;
+                            if distance == 0.0 {
+                                continue;
+                            }
+                            if foi_value >= &foi_99th_percentile {
+                                foi_entries_above_99th_percentile.push(distance);
+                            }
+                            if foi_value >= &foi_95th_percentile {
+                                foi_entries_above_95th_percentile.push(distance);
+                            }
+                        }
+                    }
+                    (
+                        foi_entries_above_99th_percentile,
+                        foi_entries_above_95th_percentile,
+                    )
+                };
+
+                let foi_99th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_99th_percentile.iter());
+                let foi_95th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_95th_percentile.iter());
+
+                worksheet.write_number(row, 9, foi_99th_percentile)?;
+                worksheet.write_number(row, 10, foi_95th_percentile)?;
+                worksheet.write_number(row, 11, foi_99th_percentile_mean_distance_from_source)?;
+                worksheet.write_number(row, 12, foi_95th_percentile_mean_distance_from_source)?;
             }
 
-            let infection_source: (usize, usize) = (x, y);
-            let infection_distances = {
-                let mut map: HashMap<(usize, usize), f64> = HashMap::new();
-                for &(x, y) in state.infected_sites.iter() {
-                    let site = (x as usize, y as usize);
-                    let distance = euclidean_distance(&infection_source, &site) * cd;
-                    //exclude initial infection point
-                    if distance > 0.0 {
-                        map.insert(site, distance);
+            if let Some(infection) = &state.infection {
+                let infection_distances = {
+                    let mut map: HashMap<(usize, usize), f64> = HashMap::new();
+                    for &(x, y) in infection.infected_sites.iter() {
+                        let site = (x as usize, y as usize);
+                        let distance = euclidean_distance(&infection_source, &site) * cd;
+                        //exclude initial infection point
+                        if distance > 0.0 {
+                            map.insert(site, distance);
+                        }
                     }
-                }
-                map
-            };
+                    map
+                };
 
-            let foi_99th_percentile = percentile_nearest(&state.foi_data, 0.99)?;
-            let foi_95th_percentile = percentile_nearest(&state.foi_data, 0.95)?;
+                let total_number_of_infected_sites = infection.infected_sites.len();
+                let newly_infected_sites =
+                    infection.infected_sites.len() - previous_number_of_infected_sites;
+                let infected_area = infection.infected_sites.len() as f64
+                    / (state.width as usize * state.height as usize) as f64;
 
-            let infection_99th_percentile = {
                 let values = infection_distances.values().copied().collect::<Vec<f64>>();
-                if values.len() == 0 {
-                    0.0
-                } else {
+                let infection_99th_percentile = if values.len() > 0 {
                     percentile_nearest(&values, 0.99)?
-                }
-            };
-            let infection_95th_percentile = {
-                let values = infection_distances.values().copied().collect::<Vec<f64>>();
-                if values.len() == 0 {
-                    0.0
                 } else {
+                    0.0
+                };
+                let infection_95th_percentile = if values.len() > 0 {
                     percentile_nearest(&values, 0.95)?
-                }
-            };
-            let infection_mean_distance_from_source = {
-                let iter = infection_distances
-                    .values()
-                    .filter(|&distance| *distance > 0.0);
-                mean_kahan(iter)
-            };
+                } else {
+                    0.0
+                };
 
-            let infection_99th_percentile_mean_distance_from_source = {
-                let iter = infection_distances
-                    .values()
-                    .filter(|&distance| *distance > 0.0 && *distance >= infection_99th_percentile);
-                mean_kahan(iter)
-            };
+                let infection_mean_distance_from_source = {
+                    let iter = infection_distances
+                        .values()
+                        .filter(|&distance| *distance > 0.0);
+                    mean_kahan(iter)
+                };
 
-            let infection_95th_percentile_mean_distance_from_source = {
-                let iter = infection_distances
-                    .values()
-                    .filter(|&distance| *distance > 0.0 && *distance >= infection_95th_percentile);
-                mean_kahan(iter)
-            };
-            let (
-                infection_99th_percentile_spread_rate_mpy,
-                infection_95th_percentile_spread_rate_mpy,
-            ) = {
+                let infection_99th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_99th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+
+                let infection_95th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_95th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+
                 let infection_99th_percentile_spread_rate_mpy =
                     infection_99th_percentile_mean_distance_from_source
                         - previous_infection_99th_percentile_mean_distance_from_source;
@@ -416,166 +517,156 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     infection_99th_percentile_mean_distance_from_source;
                 previous_infection_95th_percentile_mean_distance_from_source =
                     infection_95th_percentile_mean_distance_from_source;
-                (
-                    infection_99th_percentile_spread_rate_mpy,
-                    infection_95th_percentile_spread_rate_mpy,
-                )
-            };
 
-            let (foi_entries_above_99th_percentile, foi_entries_above_95th_percentile) = {
-                let mut foi_entries_above_99th_percentile = Vec::new();
-                let mut foi_entries_above_95th_percentile = Vec::new();
-                for (index, foi) in state.foi_data.iter().enumerate() {
-                    if foi >= &foi_99th_percentile || foi >= &foi_95th_percentile {
-                        let coordinates = index_to_coordinates(index, state.width as usize);
-                        let distance = euclidean_distance(&infection_source, &coordinates) * cd;
-                        if distance == 0.0 {
-                            continue;
-                        }
-                        if foi >= &foi_99th_percentile {
-                            foi_entries_above_99th_percentile.push(distance);
-                        }
-                        if foi >= &foi_95th_percentile {
-                            foi_entries_above_95th_percentile.push(distance);
-                        }
-                    }
-                }
-                (
-                    foi_entries_above_99th_percentile,
-                    foi_entries_above_95th_percentile,
-                )
-            };
+                let total_healthy_biomass = infection.healthy_biomass.iter().sum::<u64>() as f64;
+                let total_infected_biomass = infection.infected_biomass.iter().sum::<u64>() as f64;
+                let total_ignored_biomass = infection.ignored_biomass.iter().sum::<u64>() as f64;
+                let total_biomass =
+                    total_healthy_biomass + total_infected_biomass + total_ignored_biomass;
 
-            let foi_99th_percentile_mean_distance_from_source =
-                mean_kahan(foi_entries_above_99th_percentile.iter());
-            let foi_95th_percentile_mean_distance_from_source =
-                mean_kahan(foi_entries_above_95th_percentile.iter());
+                let proportion_infected_biomass = total_infected_biomass / total_biomass;
+                let proportion_host_infected_biomass =
+                    total_infected_biomass / (total_healthy_biomass + total_infected_biomass);
 
-            //newly infected sites
-            let newly_infected_sites: usize =
-                state.infected_sites.len() - previous_number_of_infected_sites;
-            let (newly_infected_sites_change_modifier, newly_infected_sites_change) =
-                if previous_newly_infected_sites > 0 {
-                    (
-                        newly_infected_sites as f64 / previous_newly_infected_sites as f64,
-                        newly_infected_sites as f64 - previous_newly_infected_sites as f64,
-                    )
-                } else {
-                    (1.0, 0.0)
-                };
-            previous_newly_infected_sites = newly_infected_sites;
-            previous_number_of_infected_sites = state.infected_sites.len();
+                let (newly_infected_sites_change_modifier, newly_infected_sites_change) =
+                    if previous_newly_infected_sites > 0 {
+                        (
+                            newly_infected_sites as f64 / previous_newly_infected_sites as f64,
+                            newly_infected_sites as f64 - previous_newly_infected_sites as f64,
+                        )
+                    } else {
+                        (1.0, 0.0)
+                    };
 
-            let total_number_of_infected_sites = state.infected_sites.len();
+                let (infection_area_change_modifier, infection_area_change) =
+                    if previous_infected_area > 0.0 {
+                        (
+                            infected_area / previous_infected_area,
+                            infected_area - previous_infected_area,
+                        )
+                    } else {
+                        (1.0, 0.0)
+                    };
 
-            //infected area
-            let infected_area = state.infected_sites.len() as f64
-                / (state.width as usize * state.height as usize) as f64;
-            let (infection_area_change_modifier, infection_area_change) =
-                if previous_infected_area > 0.0 {
-                    (
-                        infected_area / previous_infected_area,
-                        infected_area - previous_infected_area,
-                    )
-                } else {
-                    (1.0, 0.0)
-                };
-            if infection_area_change_modifier.is_infinite() {
-                panic!("infection_area_change_modifier is infinite");
+                let (total_healthy_biomass_change_modifier, total_healthy_biomass_change) =
+                    if previous_total_healthy_biomass > 0.0 {
+                        (
+                            total_healthy_biomass / previous_total_healthy_biomass,
+                            total_healthy_biomass - previous_total_healthy_biomass,
+                        )
+                    } else {
+                        (1.0, 0.0)
+                    };
+                let (total_infected_biomass_change_modifier, total_infected_biomass_change) =
+                    if previous_total_infected_biomass > 0.0 {
+                        (
+                            total_infected_biomass / previous_total_infected_biomass,
+                            total_infected_biomass - previous_total_infected_biomass,
+                        )
+                    } else {
+                        (1.0, 0.0)
+                    };
+                let (total_ignored_biomass_change_modifier, total_ignored_biomass_change) =
+                    if previous_total_ignored_biomass > 0.0 {
+                        (
+                            total_ignored_biomass / previous_total_ignored_biomass,
+                            total_ignored_biomass - previous_total_ignored_biomass,
+                        )
+                    } else {
+                        (1.0, 0.0)
+                    };
+                let (total_biomass_change_modifier, total_biomass_change) =
+                    if previous_total_biomass > 0.0 {
+                        (
+                            total_biomass / previous_total_biomass,
+                            total_biomass - previous_total_biomass,
+                        )
+                    } else {
+                        (1.0, 0.0)
+                    };
+
+                previous_number_of_infected_sites = infection.infected_sites.len();
+                previous_infected_area = infected_area;
+                previous_newly_infected_sites = newly_infected_sites;
+                previous_total_healthy_biomass = total_healthy_biomass;
+                previous_total_infected_biomass = total_infected_biomass;
+                previous_total_ignored_biomass = total_ignored_biomass;
+                previous_total_biomass = total_biomass;
+
+                worksheet.write_number(row, 1, total_number_of_infected_sites as f64)?;
+                worksheet.write_number(row, 2, infection_mean_distance_from_source)?;
+                worksheet.write_number(row, 3, newly_infected_sites as f64)?;
+                worksheet.write_number(row, 4, newly_infected_sites_change)?;
+                worksheet.write_number(row, 5, newly_infected_sites_change_modifier)?;
+                worksheet.write_number(row, 6, infected_area)?;
+                worksheet.write_number(row, 7, infection_area_change)?;
+                worksheet.write_number(row, 8, infection_area_change_modifier)?;
+                worksheet.write_number(row, 13, infection_99th_percentile)?;
+                worksheet.write_number(row, 14, infection_95th_percentile)?;
+                worksheet.write_number(
+                    row,
+                    15,
+                    infection_99th_percentile_mean_distance_from_source,
+                )?;
+                worksheet.write_number(
+                    row,
+                    16,
+                    infection_95th_percentile_mean_distance_from_source,
+                )?;
+                worksheet.write_number(row, 17, infection_99th_percentile_spread_rate_mpy)?;
+                worksheet.write_number(row, 18, infection_95th_percentile_spread_rate_mpy)?;
+                worksheet.write_number(row, 20, total_healthy_biomass)?;
+                worksheet.write_number(row, 21, total_infected_biomass)?;
+                worksheet.write_number(row, 22, total_ignored_biomass)?;
+                worksheet.write_number(row, 23, total_biomass)?;
+                worksheet.write_number(row, 24, proportion_infected_biomass)?;
+                worksheet.write_number(row, 25, proportion_host_infected_biomass)?;
+                worksheet.write_number(row, 26, total_healthy_biomass_change)?;
+                worksheet.write_number(row, 27, total_infected_biomass_change)?;
+                worksheet.write_number(row, 28, total_ignored_biomass_change)?;
+                worksheet.write_number(row, 29, total_biomass_change)?;
+                worksheet.write_number(row, 30, total_healthy_biomass_change_modifier)?;
+                worksheet.write_number(row, 31, total_infected_biomass_change_modifier)?;
+                worksheet.write_number(row, 32, total_ignored_biomass_change_modifier)?;
+                worksheet.write_number(row, 33, total_biomass_change_modifier)?;
             }
-            previous_infected_area = infected_area;
 
-            let annual_mortality = state.mortality_data.iter().sum::<u32>() as f64;
+            if let Some(mortality) = &state.mortality {
+                let total_annual_mortality = mortality.data.iter().sum::<u32>() as f64;
+                mortality_values.push(total_annual_mortality);
 
-            let total_healthy_biomass = state.healthy_biomass.iter().sum::<u64>() as f64;
-            let total_infected_biomass = state.infected_biomass.iter().sum::<u64>() as f64;
-            let total_ignored_biomass = state.ignored_biomass.iter().sum::<u64>() as f64;
-            let total_biomass =
-                total_healthy_biomass + total_infected_biomass + total_ignored_biomass;
+                worksheet.write_number(row, 19, total_annual_mortality)?;
+            }
 
-            let proportion_infected_biomass = total_infected_biomass / total_biomass;
-            let proportion_host_infected_biomass =
-                total_infected_biomass / (total_healthy_biomass + total_infected_biomass);
+            if let Some(infection) = &state.infection {
+                let cfg = GridRenderConfig::default();
+                let start = std::time::Instant::now();
+                let _ = render_infection_state_png(
+                    &args.output_dir,
+                    state.timestep,
+                    state.width,
+                    state.height,
+                    &infection.healthy_sites,
+                    &infection.infected_sites,
+                    &infection.ignored_sites,
+                    &cfg,
+                )?;
+                let ms = start.elapsed().as_millis();
+                img_time_sum_ms += ms;
+                img_time_count += 1;
+            }
 
-            let (total_healthy_biomass_change_modifier, total_healthy_biomass_change) =
-                if previous_total_healthy_biomass > 0.0 {
-                    (
-                        total_healthy_biomass / previous_total_healthy_biomass,
-                        total_healthy_biomass - previous_total_healthy_biomass,
-                    )
-                } else {
-                    (1.0, 0.0)
-                };
-            let (total_infected_biomass_change_modifier, total_infected_biomass_change) =
-                if previous_total_infected_biomass > 0.0 {
-                    (
-                        total_infected_biomass / previous_total_infected_biomass,
-                        total_infected_biomass - previous_total_infected_biomass,
-                    )
-                } else {
-                    (1.0, 0.0)
-                };
-            let (total_ignored_biomass_change_modifier, total_ignored_biomass_change) =
-                if previous_total_ignored_biomass > 0.0 {
-                    (
-                        total_ignored_biomass / previous_total_ignored_biomass,
-                        total_ignored_biomass - previous_total_ignored_biomass,
-                    )
-                } else {
-                    (1.0, 0.0)
-                };
-            let (total_biomass_change_modifier, total_biomass_change) =
-                if previous_total_biomass > 0.0 {
-                    (
-                        total_biomass / previous_total_biomass,
-                        total_biomass - previous_total_biomass,
-                    )
-                } else {
-                    (1.0, 0.0)
-                };
-            previous_total_healthy_biomass = total_healthy_biomass;
-            previous_total_infected_biomass = total_infected_biomass;
-            previous_total_ignored_biomass = total_ignored_biomass;
-            previous_total_biomass = total_biomass;
-
-            //write to xlsx row
             worksheet.write_number(row, 0, state.timestep as f64)?;
-            worksheet.write_number(row, 1, total_number_of_infected_sites as f64)?;
-            worksheet.write_number(row, 2, infection_mean_distance_from_source)?;
-            worksheet.write_number(row, 3, newly_infected_sites as f64)?;
-            worksheet.write_number(row, 4, newly_infected_sites_change)?;
-            worksheet.write_number(row, 5, newly_infected_sites_change_modifier)?;
-            worksheet.write_number(row, 6, infected_area)?;
-            worksheet.write_number(row, 7, infection_area_change)?;
-            worksheet.write_number(row, 8, infection_area_change_modifier)?;
-            worksheet.write_number(row, 9, foi_99th_percentile)?;
-            worksheet.write_number(row, 10, foi_95th_percentile)?;
-            worksheet.write_number(row, 11, foi_99th_percentile_mean_distance_from_source)?;
-            worksheet.write_number(row, 12, foi_95th_percentile_mean_distance_from_source)?;
-            worksheet.write_number(row, 13, infection_99th_percentile)?;
-            worksheet.write_number(row, 14, infection_95th_percentile)?;
-            worksheet.write_number(row, 15, infection_99th_percentile_mean_distance_from_source)?;
-            worksheet.write_number(row, 16, infection_95th_percentile_mean_distance_from_source)?;
-            worksheet.write_number(row, 17, infection_99th_percentile_spread_rate_mpy)?;
-            worksheet.write_number(row, 18, infection_95th_percentile_spread_rate_mpy)?;
-            worksheet.write_number(row, 19, annual_mortality)?;
-            worksheet.write_number(row, 20, total_healthy_biomass)?; //healthy biomass
-            worksheet.write_number(row, 21, total_infected_biomass)?; //infected biomass
-            worksheet.write_number(row, 22, total_ignored_biomass)?; //ignored biomass
-            worksheet.write_number(row, 23, total_biomass)?; //healthy biomass change
-            worksheet.write_number(row, 24, proportion_infected_biomass)?; //proportion of infected biomass
-            worksheet.write_number(row, 25, proportion_host_infected_biomass)?; //proportion of host infected biomass
-            worksheet.write_number(row, 26, total_healthy_biomass_change)?; //total healthy biomass change
-            worksheet.write_number(row, 27, total_infected_biomass_change)?; //total infected biomass change
-            worksheet.write_number(row, 28, total_ignored_biomass_change)?; //total ignored biomass change
-            worksheet.write_number(row, 29, total_biomass_change)?; //total biomass change
-            worksheet.write_number(row, 30, total_healthy_biomass_change_modifier)?; //total healthy biomass change modifier
-            worksheet.write_number(row, 31, total_infected_biomass_change_modifier)?; //total infected biomass change modifier
-            worksheet.write_number(row, 32, total_ignored_biomass_change_modifier)?; //total ignored biomass change modifier
-            worksheet.write_number(row, 33, total_biomass_change_modifier)?; //total biomass change modifier
             row += 1;
         }
 
+        if img_time_count > 0 {
+            let avg = img_time_sum_ms as f64 / img_time_count as f64;
+            println!(
+                "avg infection image render: {:.2} ms over {} timesteps",
+                avg, img_time_count
+            );
+        }
         let red_format = Format::new().set_background_color(Color::RGB(0xFFC7CE));
         let green_format = Format::new().set_background_color(Color::RGB(0xC6EFCE));
         let neutral_format = Format::new().set_background_color(Color::RGB(0xFFEB9C));
@@ -678,7 +769,39 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         //worksheet.add_conditional_format(1, 7, row - 1, 7, &positive_condition)?;
         //worksheet.add_conditional_format(1, 7, row - 1, 7, &zero_condition)?;
 
-        workbook.save(&args.output)?;
+        // Conditional formatting for total_annual_mortality column
+        if !mortality_values.is_empty() {
+            let min_mortality = mortality_values
+                .iter()
+                .fold(f64::INFINITY, |a, &b| a.min(b));
+            let max_mortality = mortality_values
+                .iter()
+                .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+            let median_mortality = percentile_nearest(&mortality_values, 0.5).unwrap_or(0.0);
+
+            let mortality_min_format = Format::new().set_background_color(Color::RGB(0xC6EFCE));
+            let mortality_max_format = Format::new().set_background_color(Color::RGB(0xFFC7CE));
+            let mortality_median_format = Format::new().set_background_color(Color::RGB(0xFFEB9C));
+
+            let mortality_min_condition = ConditionalFormatCell::new()
+                .set_rule(ConditionalFormatCellRule::EqualTo(min_mortality))
+                .set_format(&mortality_min_format);
+
+            let mortality_max_condition = ConditionalFormatCell::new()
+                .set_rule(ConditionalFormatCellRule::EqualTo(max_mortality))
+                .set_format(&mortality_max_format);
+
+            let mortality_median_condition = ConditionalFormatCell::new()
+                .set_rule(ConditionalFormatCellRule::EqualTo(median_mortality))
+                .set_format(&mortality_median_format);
+
+            worksheet.add_conditional_format(1, 19, row - 1, 19, &mortality_min_condition)?;
+            worksheet.add_conditional_format(1, 19, row - 1, 19, &mortality_max_condition)?;
+            worksheet.add_conditional_format(1, 19, row - 1, 19, &mortality_median_condition)?;
+        }
+
+        let xlsx_path = args.output_dir.join("output.xlsx");
+        workbook.save(&xlsx_path)?;
     }
 
     Ok(())
