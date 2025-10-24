@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 use std::cmp::Ordering;
 
 mod image_grid;
-use crate::image_grid::{GridRenderConfig, render_infection_state_png};
+use crate::image_grid::{GridRenderConfig, render_foi_png_gray16, render_infection_state_png};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -404,6 +404,24 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         let mut mortality_values: Vec<f64> = Vec::new();
         let mut img_time_sum_ms: u128 = 0;
         let mut img_time_count: usize = 0;
+
+        let mut global_foi_min = f64::INFINITY;
+        let mut global_foi_max = f64::NEG_INFINITY;
+        for (_, state) in combined.iter() {
+            if let Some(foi) = &state.foi {
+                for &v in foi.data.iter() {
+                    if v.is_finite() {
+                        if v < global_foi_min {
+                            global_foi_min = v;
+                        }
+                        if v > global_foi_max {
+                            global_foi_max = v;
+                        }
+                    }
+                }
+            }
+        }
+
         for (_, state) in combined.into_iter() {
             let infection_source: (usize, usize) = (x, y);
 
@@ -452,6 +470,34 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 worksheet.write_number(row, 10, foi_95th_percentile)?;
                 worksheet.write_number(row, 11, foi_99th_percentile_mean_distance_from_source)?;
                 worksheet.write_number(row, 12, foi_95th_percentile_mean_distance_from_source)?;
+
+                let cfg = GridRenderConfig::default();
+                let normalized: Vec<f64> = foi
+                    .data
+                    .iter()
+                    .map(|&v| {
+                        if v.is_finite() && global_foi_max > global_foi_min {
+                            let mut n = (v - global_foi_min) / (global_foi_max - global_foi_min);
+                            if n < 0.0 {
+                                n = 0.0;
+                            }
+                            if n > 1.0 {
+                                n = 1.0;
+                            }
+                            n
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect();
+                let _ = render_foi_png_gray16(
+                    &args.output_dir,
+                    state.timestep,
+                    state.width,
+                    state.height,
+                    &normalized,
+                    &cfg,
+                )?;
             }
 
             if let Some(infection) = &state.infection {
