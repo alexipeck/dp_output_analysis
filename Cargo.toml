@@ -13,3 +13,5 @@ ndarray = "0.16.1"
 ndarray-stats = "0.6"
 noisy_float = "0.2"
 png = "0.18.0"
+strum = { version = "0.27.2", features = ["derive"] }
+lazy_static = "1.4.0"

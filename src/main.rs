@@ -1,6 +1,8 @@
 use clap::Parser;
+use rust_xlsxwriter::conditional_format::ConditionalFormat;
+use rust_xlsxwriter::worksheet::Worksheet;
 use rust_xlsxwriter::{
-    Color, ConditionalFormatCell, ConditionalFormatCellRule, Format, Note, Workbook,
+    Color, ConditionalFormatCell, ConditionalFormatCellRule, Format, Note, XlsxError,
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
@@ -8,9 +10,843 @@ use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::path::PathBuf;
 use std::{fs, io};
+use strum::{EnumIter, IntoEnumIterator};
 use walkdir::WalkDir;
 
+use lazy_static::lazy_static;
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+
+lazy_static! {
+    static ref ROW_COUNTER: AtomicU32 = AtomicU32::new(1);
+}
+
+struct Workbook {
+    workbook: rust_xlsxwriter::Workbook,
+}
+
+impl Workbook {
+    fn new() -> Self {
+        let mut workbook = rust_xlsxwriter::Workbook::new();
+        workbook.add_worksheet();
+        Self { workbook }
+    }
+
+    fn get_worksheet(&mut self) -> &mut Worksheet {
+        self.workbook
+            .worksheet_from_index(0)
+            .expect("Worksheet not found")
+    }
+
+    fn add_conditional_format(
+        &mut self,
+        column: u16,
+        condition: &ConditionalFormatCell,
+    ) -> Result<(), XlsxError> {
+        let row = ROW_COUNTER.load(AtomicOrdering::SeqCst);
+        let worksheet = self.get_worksheet();
+        worksheet.add_conditional_format(1, column, row - 1, column, condition)?;
+        Ok(())
+    }
+
+    fn write_number(&mut self, column: u16, value: f64) -> Result<(), XlsxError> {
+        let row = ROW_COUNTER.load(AtomicOrdering::SeqCst);
+        let worksheet = self.get_worksheet();
+        worksheet.write_number(row, column, value)?;
+        Ok(())
+    }
+
+    fn save(&mut self, path: &str) -> Result<(), XlsxError> {
+        self.workbook.save(path)
+    }
+}
+
+enum ConditionalFormatter {
+    ChangeModifier,
+    ChangePercentage,
+    ChangeAbsolute,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
+enum Column {
+    Timestep,
+    InfTotal,
+    InfMeanDistMeters,
+    InfNew,
+    InfectedNewChange,
+    InfNewChangePercentage,
+    InfNewChangeMod,
+    InfAreaSquareMeters,
+    InfAreaChangeSquareMeters,
+    InfAreaChangeSquareMetersPercentage,
+    InfectedAreaChangeSquareMetersMod,
+    Inf99thPercentile,
+    Inf95thPercentile,
+    Inf90thPercentile,
+    Inf85thPercentile,
+    Inf80thPercentile,
+    Inf75thPercentile,
+    Inf70thPercentile,
+    Inf65thPercentile,
+    Inf60thPercentile,
+    Inf55thPercentile,
+    Inf50thPercentile,
+    Inf45thPercentile,
+    Inf40thPercentile,
+    Inf35thPercentile,
+    Inf30thPercentile,
+    Inf25thPercentile,
+    Inf20thPercentile,
+    Inf15thPercentile,
+    Inf10thPercentile,
+    Inf99thPercentileMeanDistanceMeters,
+    Inf95thPercentileMeanDistanceMeters,
+    Inf90thPercentileMeanDistanceMeters,
+    Inf85thPercentileMeanDistanceMeters,
+    Inf80thPercentileMeanDistanceMeters,
+    Inf75thPercentileMeanDistanceMeters,
+    Inf70thPercentileMeanDistanceMeters,
+    Inf65thPercentileMeanDistanceMeters,
+    Inf60thPercentileMeanDistanceMeters,
+    Inf55thPercentileMeanDistanceMeters,
+    Inf50thPercentileMeanDistanceMeters,
+    Inf45thPercentileMeanDistanceMeters,
+    Inf40thPercentileMeanDistanceMeters,
+    Inf35thPercentileMeanDistanceMeters,
+    Inf30thPercentileMeanDistanceMeters,
+    Inf25thPercentileMeanDistanceMeters,
+    Inf20thPercentileMeanDistanceMeters,
+    Inf15thPercentileMeanDistanceMeters,
+    Inf10thPercentileMeanDistanceMeters,
+    Inf99thPercentileSpreadMetersPerYear,
+    Inf95thPercentileSpreadMetersPerYear,
+    Inf90thPercentileSpreadMetersPerYear,
+    Inf85thPercentileSpreadMetersPerYear,
+    Inf80thPercentileSpreadMetersPerYear,
+    Inf75thPercentileSpreadMetersPerYear,
+    Inf70thPercentileSpreadMetersPerYear,
+    Inf65thPercentileSpreadMetersPerYear,
+    Inf60thPercentileSpreadMetersPerYear,
+    Inf55thPercentileSpreadMetersPerYear,
+    Inf50thPercentileSpreadMetersPerYear,
+    Inf45thPercentileSpreadMetersPerYear,
+    Inf40thPercentileSpreadMetersPerYear,
+    Inf35thPercentileSpreadMetersPerYear,
+    Inf30thPercentileSpreadMetersPerYear,
+    Inf25thPercentileSpreadMetersPerYear,
+    Inf20thPercentileSpreadMetersPerYear,
+    Inf15thPercentileSpreadMetersPerYear,
+    Inf10thPercentileSpreadMetersPerYear,
+    FOI99thPercentile,
+    FOI95thPercentile,
+    FOI90thPercentile,
+    FOI85thPercentile,
+    FOI80thPercentile,
+    FOI75thPercentile,
+    FOI70thPercentile,
+    FOI65thPercentile,
+    FOI60thPercentile,
+    FOI55thPercentile,
+    FOI50thPercentile,
+    FOI45thPercentile,
+    FOI40thPercentile,
+    FOI35thPercentile,
+    FOI30thPercentile,
+    FOI25thPercentile,
+    FOI20thPercentile,
+    FOI15thPercentile,
+    FOI10thPercentile,
+    FOI99thPercentileMeanDistanceMeters,
+    FOI95thPercentileMeanDistanceMeters,
+    FOI90thPercentileMeanDistanceMeters,
+    FOI85thPercentileMeanDistanceMeters,
+    FOI80thPercentileMeanDistanceMeters,
+    FOI75thPercentileMeanDistanceMeters,
+    FOI70thPercentileMeanDistanceMeters,
+    FOI65thPercentileMeanDistanceMeters,
+    FOI60thPercentileMeanDistanceMeters,
+    FOI55thPercentileMeanDistanceMeters,
+    FOI50thPercentileMeanDistanceMeters,
+    FOI45thPercentileMeanDistanceMeters,
+    FOI40thPercentileMeanDistanceMeters,
+    FOI35thPercentileMeanDistanceMeters,
+    FOI30thPercentileMeanDistanceMeters,
+    FOI25thPercentileMeanDistanceMeters,
+    FOI20thPercentileMeanDistanceMeters,
+    FOI15thPercentileMeanDistanceMeters,
+    FOI10thPercentileMeanDistanceMeters,
+    FOI99thPercentileSpreadMetersPerYear,
+    FOI95thPercentileSpreadMetersPerYear,
+    FOI90thPercentileSpreadMetersPerYear,
+    FOI85thPercentileSpreadMetersPerYear,
+    FOI80thPercentileSpreadMetersPerYear,
+    FOI75thPercentileSpreadMetersPerYear,
+    FOI70thPercentileSpreadMetersPerYear,
+    FOI65thPercentileSpreadMetersPerYear,
+    FOI60thPercentileSpreadMetersPerYear,
+    FOI55thPercentileSpreadMetersPerYear,
+    FOI50thPercentileSpreadMetersPerYear,
+    FOI45thPercentileSpreadMetersPerYear,
+    FOI40thPercentileSpreadMetersPerYear,
+    FOI35thPercentileSpreadMetersPerYear,
+    FOI30thPercentileSpreadMetersPerYear,
+    FOI25thPercentileSpreadMetersPerYear,
+    FOI20thPercentileSpreadMetersPerYear,
+    FOI15thPercentileSpreadMetersPerYear,
+    FOI10thPercentileSpreadMetersPerYear,
+    TotalAnnualMortality,
+    TotalHealthyBiomass,
+    TotalInfectedBiomass,
+    TotalIgnoredBiomass,
+    TotalBiomass,
+    ProportionInfectedBiomass,
+    ProportionHostInfectedBiomass,
+    TotalHealthyBiomassChange,
+    TotalInfectedBiomassChange,
+    TotalIgnoredBiomassChange,
+    TotalBiomassChange,
+    TotalHealthyBiomassChangePercentage,
+    TotalInfectedBiomassChangePercentage,
+    TotalIgnoredBiomassChangePercentage,
+    TotalBiomassChangePercentage,
+    TotalHealthyBiomassChangeMod,
+    TotalInfectedBiomassChangeMod,
+    TotalIgnoredBiomassChangeMod,
+    TotalBiomassChangeMod,
+}
+
+impl Column {
+    fn number(self) -> u16 {
+        match self {
+            Column::Timestep => 0,
+            Column::InfTotal => 1,
+            Column::InfMeanDistMeters => 2,
+            Column::InfNew => 3,
+            Column::InfectedNewChange => 4,
+            Column::InfNewChangePercentage => 5,
+            Column::InfNewChangeMod => 6,
+            Column::InfAreaSquareMeters => 7,
+            Column::InfAreaChangeSquareMeters => 8,
+            Column::InfAreaChangeSquareMetersPercentage => 9,
+            Column::InfectedAreaChangeSquareMetersMod => 10,
+            Column::Inf99thPercentile => 11,
+            Column::Inf95thPercentile => 12,
+            Column::Inf90thPercentile => 13,
+            Column::Inf85thPercentile => 14,
+            Column::Inf80thPercentile => 15,
+            Column::Inf75thPercentile => 16,
+            Column::Inf70thPercentile => 17,
+            Column::Inf65thPercentile => 18,
+            Column::Inf60thPercentile => 19,
+            Column::Inf55thPercentile => 20,
+            Column::Inf50thPercentile => 21,
+            Column::Inf45thPercentile => 22,
+            Column::Inf40thPercentile => 23,
+            Column::Inf35thPercentile => 24,
+            Column::Inf30thPercentile => 25,
+            Column::Inf25thPercentile => 26,
+            Column::Inf20thPercentile => 27,
+            Column::Inf15thPercentile => 28,
+            Column::Inf10thPercentile => 29,
+            Column::Inf99thPercentileMeanDistanceMeters => 30,
+            Column::Inf95thPercentileMeanDistanceMeters => 31,
+            Column::Inf90thPercentileMeanDistanceMeters => 32,
+            Column::Inf85thPercentileMeanDistanceMeters => 33,
+            Column::Inf80thPercentileMeanDistanceMeters => 34,
+            Column::Inf75thPercentileMeanDistanceMeters => 35,
+            Column::Inf70thPercentileMeanDistanceMeters => 36,
+            Column::Inf65thPercentileMeanDistanceMeters => 37,
+            Column::Inf60thPercentileMeanDistanceMeters => 38,
+            Column::Inf55thPercentileMeanDistanceMeters => 39,
+            Column::Inf50thPercentileMeanDistanceMeters => 40,
+            Column::Inf45thPercentileMeanDistanceMeters => 41,
+            Column::Inf40thPercentileMeanDistanceMeters => 42,
+            Column::Inf35thPercentileMeanDistanceMeters => 43,
+            Column::Inf30thPercentileMeanDistanceMeters => 44,
+            Column::Inf25thPercentileMeanDistanceMeters => 45,
+            Column::Inf20thPercentileMeanDistanceMeters => 46,
+            Column::Inf15thPercentileMeanDistanceMeters => 47,
+            Column::Inf10thPercentileMeanDistanceMeters => 48,
+            Column::Inf99thPercentileSpreadMetersPerYear => 49,
+            Column::Inf95thPercentileSpreadMetersPerYear => 50,
+            Column::Inf90thPercentileSpreadMetersPerYear => 51,
+            Column::Inf85thPercentileSpreadMetersPerYear => 52,
+            Column::Inf80thPercentileSpreadMetersPerYear => 53,
+            Column::Inf75thPercentileSpreadMetersPerYear => 54,
+            Column::Inf70thPercentileSpreadMetersPerYear => 55,
+            Column::Inf65thPercentileSpreadMetersPerYear => 56,
+            Column::Inf60thPercentileSpreadMetersPerYear => 57,
+            Column::Inf55thPercentileSpreadMetersPerYear => 58,
+            Column::Inf50thPercentileSpreadMetersPerYear => 59,
+            Column::Inf45thPercentileSpreadMetersPerYear => 60,
+            Column::Inf40thPercentileSpreadMetersPerYear => 61,
+            Column::Inf35thPercentileSpreadMetersPerYear => 62,
+            Column::Inf30thPercentileSpreadMetersPerYear => 63,
+            Column::Inf25thPercentileSpreadMetersPerYear => 64,
+            Column::Inf20thPercentileSpreadMetersPerYear => 65,
+            Column::Inf15thPercentileSpreadMetersPerYear => 66,
+            Column::Inf10thPercentileSpreadMetersPerYear => 67,
+            Column::FOI99thPercentile => 68,
+            Column::FOI95thPercentile => 69,
+            Column::FOI90thPercentile => 70,
+            Column::FOI85thPercentile => 71,
+            Column::FOI80thPercentile => 72,
+            Column::FOI75thPercentile => 73,
+            Column::FOI70thPercentile => 74,
+            Column::FOI65thPercentile => 75,
+            Column::FOI60thPercentile => 76,
+            Column::FOI55thPercentile => 77,
+            Column::FOI50thPercentile => 78,
+            Column::FOI45thPercentile => 79,
+            Column::FOI40thPercentile => 80,
+            Column::FOI35thPercentile => 81,
+            Column::FOI30thPercentile => 82,
+            Column::FOI25thPercentile => 83,
+            Column::FOI20thPercentile => 84,
+            Column::FOI15thPercentile => 85,
+            Column::FOI10thPercentile => 86,
+            Column::FOI99thPercentileMeanDistanceMeters => 87,
+            Column::FOI95thPercentileMeanDistanceMeters => 88,
+            Column::FOI90thPercentileMeanDistanceMeters => 89,
+            Column::FOI85thPercentileMeanDistanceMeters => 90,
+            Column::FOI80thPercentileMeanDistanceMeters => 91,
+            Column::FOI75thPercentileMeanDistanceMeters => 92,
+            Column::FOI70thPercentileMeanDistanceMeters => 93,
+            Column::FOI65thPercentileMeanDistanceMeters => 94,
+            Column::FOI60thPercentileMeanDistanceMeters => 95,
+            Column::FOI55thPercentileMeanDistanceMeters => 96,
+            Column::FOI50thPercentileMeanDistanceMeters => 97,
+            Column::FOI45thPercentileMeanDistanceMeters => 98,
+            Column::FOI40thPercentileMeanDistanceMeters => 99,
+            Column::FOI35thPercentileMeanDistanceMeters => 100,
+            Column::FOI30thPercentileMeanDistanceMeters => 101,
+            Column::FOI25thPercentileMeanDistanceMeters => 102,
+            Column::FOI20thPercentileMeanDistanceMeters => 103,
+            Column::FOI15thPercentileMeanDistanceMeters => 104,
+            Column::FOI10thPercentileMeanDistanceMeters => 105,
+            Column::FOI99thPercentileSpreadMetersPerYear => 106,
+            Column::FOI95thPercentileSpreadMetersPerYear => 107,
+            Column::FOI90thPercentileSpreadMetersPerYear => 108,
+            Column::FOI85thPercentileSpreadMetersPerYear => 109,
+            Column::FOI80thPercentileSpreadMetersPerYear => 110,
+            Column::FOI75thPercentileSpreadMetersPerYear => 111,
+            Column::FOI70thPercentileSpreadMetersPerYear => 112,
+            Column::FOI65thPercentileSpreadMetersPerYear => 113,
+            Column::FOI60thPercentileSpreadMetersPerYear => 114,
+            Column::FOI55thPercentileSpreadMetersPerYear => 115,
+            Column::FOI50thPercentileSpreadMetersPerYear => 116,
+            Column::FOI45thPercentileSpreadMetersPerYear => 117,
+            Column::FOI40thPercentileSpreadMetersPerYear => 118,
+            Column::FOI35thPercentileSpreadMetersPerYear => 119,
+            Column::FOI30thPercentileSpreadMetersPerYear => 120,
+            Column::FOI25thPercentileSpreadMetersPerYear => 121,
+            Column::FOI20thPercentileSpreadMetersPerYear => 122,
+            Column::FOI15thPercentileSpreadMetersPerYear => 123,
+            Column::FOI10thPercentileSpreadMetersPerYear => 124,
+            Column::TotalAnnualMortality => 125,
+            Column::TotalHealthyBiomass => 126,
+            Column::TotalInfectedBiomass => 127,
+            Column::TotalIgnoredBiomass => 128,
+            Column::TotalBiomass => 129,
+            Column::ProportionInfectedBiomass => 130,
+            Column::ProportionHostInfectedBiomass => 131,
+            Column::TotalHealthyBiomassChange => 132,
+            Column::TotalInfectedBiomassChange => 133,
+            Column::TotalIgnoredBiomassChange => 134,
+            Column::TotalBiomassChange => 135,
+            Column::TotalHealthyBiomassChangePercentage => 136,
+            Column::TotalInfectedBiomassChangePercentage => 137,
+            Column::TotalIgnoredBiomassChangePercentage => 138,
+            Column::TotalBiomassChangePercentage => 139,
+            Column::TotalHealthyBiomassChangeMod => 140,
+            Column::TotalInfectedBiomassChangeMod => 141,
+            Column::TotalIgnoredBiomassChangeMod => 142,
+            Column::TotalBiomassChangeMod => 143,
+        }
+    }
+
+    fn to_string(self) -> String {
+        match self {
+            Column::Timestep => "timestep",
+            Column::InfTotal => "inf_total",
+            Column::InfMeanDistMeters => "inf_mean_dist_m",
+            Column::InfNew => "inf_new",
+            Column::InfectedNewChange => "inf_new_change",
+            Column::InfNewChangePercentage => "inf_new_change_percent",
+            Column::InfNewChangeMod => "inf_new_change_mod",
+            Column::InfAreaSquareMeters => "inf_area_m2",
+            Column::InfAreaChangeSquareMeters => "inf_area_change_m2",
+            Column::InfAreaChangeSquareMetersPercentage => "inf_area_change_m2_percent",
+            Column::InfectedAreaChangeSquareMetersMod => "inf_area_change_m2_mod",
+            Column::Inf99thPercentile => "inf_99th_p",
+            Column::Inf95thPercentile => "inf_95th_p",
+            Column::Inf99thPercentileMeanDistanceMeters => "inf_99th_p_mean_dist_m",
+            Column::Inf95thPercentileMeanDistanceMeters => "inf_95th_p_mean_dist_m",
+            Column::Inf99thPercentileSpreadMetersPerYear => "inf_99th_p_spread_mpy",
+            Column::Inf95thPercentileSpreadMetersPerYear => "inf_95th_p_spread_mpy",
+            Column::FOI99thPercentile => "foi_99th_p",
+            Column::FOI95thPercentile => "foi_95th_p",
+            Column::FOI99thPercentileMeanDistanceMeters => "foi_99th_p_mean_dist_m",
+            Column::FOI95thPercentileMeanDistanceMeters => "foi_95th_p_mean_dist_m",
+            Column::TotalAnnualMortality => "t_annual_mortality",
+            Column::TotalHealthyBiomass => "t_hea_biomass",
+            Column::TotalInfectedBiomass => "t_inf_biomass",
+            Column::TotalIgnoredBiomass => "t_ign_biomass",
+            Column::TotalBiomass => "t_biomass",
+            Column::ProportionInfectedBiomass => "prop_inf_biomass",
+            Column::ProportionHostInfectedBiomass => "prop_host_inf_biomass",
+            Column::TotalHealthyBiomassChange => "t_hea_biomass_change",
+            Column::TotalInfectedBiomassChange => "t_inf_biomass_change",
+            Column::TotalIgnoredBiomassChange => "t_ign_biomass_change",
+            Column::TotalBiomassChange => "t_biomass_change",
+            Column::TotalHealthyBiomassChangePercentage => "t_hea_biomass_change_percent",
+            Column::TotalInfectedBiomassChangePercentage => "t_inf_biomass_change_percent",
+            Column::TotalIgnoredBiomassChangePercentage => "t_ign_biomass_change_percent",
+            Column::TotalBiomassChangePercentage => "t_biomass_change_percent",
+            Column::TotalHealthyBiomassChangeMod => "t_hea_biomass_change_mod",
+            Column::TotalInfectedBiomassChangeMod => "t_inf_biomass_change_mod",
+            Column::TotalIgnoredBiomassChangeMod => "t_ign_biomass_change_mod",
+            Column::TotalBiomassChangeMod => "t_biomass_change_mod",
+            Column::Inf90thPercentile => "inf_90th_p",
+            Column::Inf85thPercentile => "inf_85th_p",
+            Column::Inf80thPercentile => "inf_80th_p",
+            Column::Inf75thPercentile => "inf_75th_p",
+            Column::Inf70thPercentile => "inf_70th_p",
+            Column::Inf65thPercentile => "inf_65th_p",
+            Column::Inf60thPercentile => "inf_60th_p",
+            Column::Inf55thPercentile => "inf_55th_p",
+            Column::Inf50thPercentile => "inf_50th_p",
+            Column::Inf45thPercentile => "inf_45th_p",
+            Column::Inf40thPercentile => "inf_40th_p",
+            Column::Inf35thPercentile => "inf_35th_p",
+            Column::Inf30thPercentile => "inf_30th_p",
+            Column::Inf25thPercentile => "inf_25th_p",
+            Column::Inf20thPercentile => "inf_20th_p",
+            Column::Inf15thPercentile => "inf_15th_p",
+            Column::Inf10thPercentile => "inf_10th_p",
+            Column::Inf90thPercentileMeanDistanceMeters => "inf_90th_p_mean_dist_m",
+            Column::Inf85thPercentileMeanDistanceMeters => "inf_85th_p_mean_dist_m",
+            Column::Inf80thPercentileMeanDistanceMeters => "inf_80th_p_mean_dist_m",
+            Column::Inf75thPercentileMeanDistanceMeters => "inf_75th_p_mean_dist_m",
+            Column::Inf70thPercentileMeanDistanceMeters => "inf_70th_p_mean_dist_m",
+            Column::Inf65thPercentileMeanDistanceMeters => "inf_65th_p_mean_dist_m",
+            Column::Inf60thPercentileMeanDistanceMeters => "inf_60th_p_mean_dist_m",
+            Column::Inf55thPercentileMeanDistanceMeters => "inf_55th_p_mean_dist_m",
+            Column::Inf50thPercentileMeanDistanceMeters => "inf_50th_p_mean_dist_m",
+            Column::Inf45thPercentileMeanDistanceMeters => "inf_45th_p_mean_dist_m",
+            Column::Inf40thPercentileMeanDistanceMeters => "inf_40th_p_mean_dist_m",
+            Column::Inf35thPercentileMeanDistanceMeters => "inf_35th_p_mean_dist_m",
+            Column::Inf30thPercentileMeanDistanceMeters => "inf_30th_p_mean_dist_m",
+            Column::Inf25thPercentileMeanDistanceMeters => "inf_25th_p_mean_dist_m",
+            Column::Inf20thPercentileMeanDistanceMeters => "inf_20th_p_mean_dist_m",
+            Column::Inf15thPercentileMeanDistanceMeters => "inf_15th_p_mean_dist_m",
+            Column::Inf10thPercentileMeanDistanceMeters => "inf_10th_p_mean_dist_m",
+            Column::Inf90thPercentileSpreadMetersPerYear => "inf_90th_p_spread_mpy",
+            Column::Inf85thPercentileSpreadMetersPerYear => "inf_85th_p_spread_mpy",
+            Column::Inf80thPercentileSpreadMetersPerYear => "inf_80th_p_spread_mpy",
+            Column::Inf75thPercentileSpreadMetersPerYear => "inf_75th_p_spread_mpy",
+            Column::Inf70thPercentileSpreadMetersPerYear => "inf_70th_p_spread_mpy",
+            Column::Inf65thPercentileSpreadMetersPerYear => "inf_65th_p_spread_mpy",
+            Column::Inf60thPercentileSpreadMetersPerYear => "inf_60th_p_spread_mpy",
+            Column::Inf55thPercentileSpreadMetersPerYear => "inf_55th_p_spread_mpy",
+            Column::Inf50thPercentileSpreadMetersPerYear => "inf_50th_p_spread_mpy",
+            Column::Inf45thPercentileSpreadMetersPerYear => "inf_45th_p_spread_mpy",
+            Column::Inf40thPercentileSpreadMetersPerYear => "inf_40th_p_spread_mpy",
+            Column::Inf35thPercentileSpreadMetersPerYear => "inf_35th_p_spread_mpy",
+            Column::Inf30thPercentileSpreadMetersPerYear => "inf_30th_p_spread_mpy",
+            Column::Inf25thPercentileSpreadMetersPerYear => "inf_25th_p_spread_mpy",
+            Column::Inf20thPercentileSpreadMetersPerYear => "inf_20th_p_spread_mpy",
+            Column::Inf15thPercentileSpreadMetersPerYear => "inf_15th_p_spread_mpy",
+            Column::Inf10thPercentileSpreadMetersPerYear => "inf_10th_p_spread_mpy",
+            Column::FOI90thPercentile => "foi_90th_p",
+            Column::FOI85thPercentile => "foi_85th_p",
+            Column::FOI80thPercentile => "foi_80th_p",
+            Column::FOI75thPercentile => "foi_75th_p",
+            Column::FOI70thPercentile => "foi_70th_p",
+            Column::FOI65thPercentile => "foi_65th_p",
+            Column::FOI60thPercentile => "foi_60th_p",
+            Column::FOI55thPercentile => "foi_55th_p",
+            Column::FOI50thPercentile => "foi_50th_p",
+            Column::FOI45thPercentile => "foi_45th_p",
+            Column::FOI40thPercentile => "foi_40th_p",
+            Column::FOI35thPercentile => "foi_35th_p",
+            Column::FOI30thPercentile => "foi_30th_p",
+            Column::FOI25thPercentile => "foi_25th_p",
+            Column::FOI20thPercentile => "foi_20th_p",
+            Column::FOI15thPercentile => "foi_15th_p",
+            Column::FOI10thPercentile => "foi_10th_p",
+            Column::FOI90thPercentileMeanDistanceMeters => "foi_90th_p_mean_dist_m",
+            Column::FOI85thPercentileMeanDistanceMeters => "foi_85th_p_mean_dist_m",
+            Column::FOI80thPercentileMeanDistanceMeters => "foi_80th_p_mean_dist_m",
+            Column::FOI75thPercentileMeanDistanceMeters => "foi_75th_p_mean_dist_m",
+            Column::FOI70thPercentileMeanDistanceMeters => "foi_70th_p_mean_dist_m",
+            Column::FOI65thPercentileMeanDistanceMeters => "foi_65th_p_mean_dist_m",
+            Column::FOI60thPercentileMeanDistanceMeters => "foi_60th_p_mean_dist_m",
+            Column::FOI55thPercentileMeanDistanceMeters => "foi_55th_p_mean_dist_m",
+            Column::FOI50thPercentileMeanDistanceMeters => "foi_50th_p_mean_dist_m",
+            Column::FOI45thPercentileMeanDistanceMeters => "foi_45th_p_mean_dist_m",
+            Column::FOI40thPercentileMeanDistanceMeters => "foi_40th_p_mean_dist_m",
+            Column::FOI35thPercentileMeanDistanceMeters => "foi_35th_p_mean_dist_m",
+            Column::FOI30thPercentileMeanDistanceMeters => "foi_30th_p_mean_dist_m",
+            Column::FOI25thPercentileMeanDistanceMeters => "foi_25th_p_mean_dist_m",
+            Column::FOI20thPercentileMeanDistanceMeters => "foi_20th_p_mean_dist_m",
+            Column::FOI15thPercentileMeanDistanceMeters => "foi_15th_p_mean_dist_m",
+            Column::FOI10thPercentileMeanDistanceMeters => "foi_10th_p_mean_dist_m",
+            Column::FOI99thPercentileSpreadMetersPerYear => "foi_99th_p_spread_mpy",
+            Column::FOI95thPercentileSpreadMetersPerYear => "foi_95th_p_spread_mpy",
+            Column::FOI90thPercentileSpreadMetersPerYear => "foi_90th_p_spread_mpy",
+            Column::FOI85thPercentileSpreadMetersPerYear => "foi_85th_p_spread_mpy",
+            Column::FOI80thPercentileSpreadMetersPerYear => "foi_80th_p_spread_mpy",
+            Column::FOI75thPercentileSpreadMetersPerYear => "foi_75th_p_spread_mpy",
+            Column::FOI70thPercentileSpreadMetersPerYear => "foi_70th_p_spread_mpy",
+            Column::FOI65thPercentileSpreadMetersPerYear => "foi_65th_p_spread_mpy",
+            Column::FOI60thPercentileSpreadMetersPerYear => "foi_60th_p_spread_mpy",
+            Column::FOI55thPercentileSpreadMetersPerYear => "foi_55th_p_spread_mpy",
+            Column::FOI50thPercentileSpreadMetersPerYear => "foi_50th_p_spread_mpy",
+            Column::FOI45thPercentileSpreadMetersPerYear => "foi_45th_p_spread_mpy",
+            Column::FOI40thPercentileSpreadMetersPerYear => "foi_40th_p_spread_mpy",
+            Column::FOI35thPercentileSpreadMetersPerYear => "foi_35th_p_spread_mpy",
+            Column::FOI30thPercentileSpreadMetersPerYear => "foi_30th_p_spread_mpy",
+            Column::FOI25thPercentileSpreadMetersPerYear => "foi_25th_p_spread_mpy",
+            Column::FOI20thPercentileSpreadMetersPerYear => "foi_20th_p_spread_mpy",
+            Column::FOI15thPercentileSpreadMetersPerYear => "foi_15th_p_spread_mpy",
+            Column::FOI10thPercentileSpreadMetersPerYear => "foi_10th_p_spread_mpy",
+        }
+        .to_string()
+    }
+
+    fn description(self) -> String {
+        match self {
+            Column::Timestep => "timestep",
+            Column::InfTotal => "total number of infected sites",
+            Column::InfMeanDistMeters => "infection mean distance from source in meters",
+            Column::InfNew => "newly infected sites",
+            Column::InfectedNewChange => "newly infected sites change",
+            Column::InfNewChangePercentage => "newly infection sites percent",
+            Column::InfNewChangeMod => "newly infected sites change modifier",
+            Column::InfAreaSquareMeters => "infected area square meters",
+            Column::InfAreaChangeSquareMeters => "infected area change square meters",
+            Column::InfAreaChangeSquareMetersPercentage => {
+                "infected area change square meters percent"
+            }
+            Column::InfectedAreaChangeSquareMetersMod => "infection area change modifier",
+            Column::Inf99thPercentile => "infection 99th percentile",
+            Column::Inf95thPercentile => "infection 95th percentile",
+            Column::Inf99thPercentileMeanDistanceMeters => {
+                "infection mean distance of 99th percentile from source"
+            }
+            Column::Inf95thPercentileMeanDistanceMeters => {
+                "infection mean distance of 95th percentile from source"
+            }
+            Column::Inf99thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 99th percentile"
+            }
+            Column::Inf95thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 95th percentile"
+            }
+            Column::FOI99thPercentile => "force of infection 99th percentile",
+            Column::FOI95thPercentile => "force of infection 95th percentile",
+            Column::FOI99thPercentileMeanDistanceMeters => {
+                "force of infection 99th percentile mean distance from source"
+            }
+            Column::FOI95thPercentileMeanDistanceMeters => {
+                "force of infection 95th percentile mean distance from source"
+            }
+            Column::FOI90thPercentileMeanDistanceMeters => {
+                "force of infection 90th percentile mean distance from source"
+            }
+            Column::FOI85thPercentileMeanDistanceMeters => {
+                "force of infection 85th percentile mean distance from source"
+            }
+            Column::FOI80thPercentileMeanDistanceMeters => {
+                "force of infection 80th percentile mean distance from source"
+            }
+            Column::FOI75thPercentileMeanDistanceMeters => {
+                "force of infection 75th percentile mean distance from source"
+            }
+            Column::FOI70thPercentileMeanDistanceMeters => {
+                "force of infection 70th percentile mean distance from source"
+            }
+            Column::FOI65thPercentileMeanDistanceMeters => {
+                "force of infection 65th percentile mean distance from source"
+            }
+            Column::FOI60thPercentileMeanDistanceMeters => {
+                "force of infection 60th percentile mean distance from source"
+            }
+            Column::FOI55thPercentileMeanDistanceMeters => {
+                "force of infection 55th percentile mean distance from source"
+            }
+            Column::FOI50thPercentileMeanDistanceMeters => {
+                "force of infection 50th percentile mean distance from source"
+            }
+            Column::FOI45thPercentileMeanDistanceMeters => {
+                "force of infection 45th percentile mean distance from source"
+            }
+            Column::FOI40thPercentileMeanDistanceMeters => {
+                "force of infection 40th percentile mean distance from source"
+            }
+            Column::FOI35thPercentileMeanDistanceMeters => {
+                "force of infection 35th percentile mean distance from source"
+            }
+            Column::FOI30thPercentileMeanDistanceMeters => {
+                "force of infection 30th percentile mean distance from source"
+            }
+            Column::FOI25thPercentileMeanDistanceMeters => {
+                "force of infection 25th percentile mean distance from source"
+            }
+            Column::FOI20thPercentileMeanDistanceMeters => {
+                "force of infection 20th percentile mean distance from source"
+            }
+            Column::FOI15thPercentileMeanDistanceMeters => {
+                "force of infection 15th percentile mean distance from source"
+            }
+            Column::FOI10thPercentileMeanDistanceMeters => {
+                "force of infection 10th percentile mean distance from source"
+            }
+            Column::TotalAnnualMortality => "annual mortality (conditional formatting indicates the min (green), max (red) and median (yellow) values)",
+            Column::TotalHealthyBiomass => "total healthy biomass",
+            Column::TotalInfectedBiomass => "total infected biomass",
+            Column::TotalIgnoredBiomass => "total ignored biomass",
+            Column::TotalBiomass => "total biomass",
+            Column::ProportionInfectedBiomass => {
+                "proportion of infected biomass (between 0.0 and 1.0)"
+            }
+            Column::ProportionHostInfectedBiomass => {
+                "proportion of host infected biomass (between 0.0 and 1.0)"
+            }
+            Column::TotalHealthyBiomassChange => "total healthy biomass change",
+            Column::TotalInfectedBiomassChange => "total infected biomass change",
+            Column::TotalIgnoredBiomassChange => "total ignored biomass change",
+            Column::TotalBiomassChange => "total biomass change",
+            Column::TotalHealthyBiomassChangePercentage => "total healthy biomass change percent",
+            Column::TotalInfectedBiomassChangePercentage => "total infected biomass change percent",
+            Column::TotalIgnoredBiomassChangePercentage => "total ignored biomass change percent",
+            Column::TotalBiomassChangePercentage => "total biomass change percent",
+            Column::TotalHealthyBiomassChangeMod => "total healthy biomass change modifier",
+            Column::TotalInfectedBiomassChangeMod => "total infected biomass change modifier",
+            Column::TotalIgnoredBiomassChangeMod => "total ignored biomass change modifier",
+            Column::TotalBiomassChangeMod => "total biomass change modifier",
+            Column::Inf90thPercentile => "infection 90th percentile",
+            Column::Inf85thPercentile => "infection 85th percentile",
+            Column::Inf80thPercentile => "infection 80th percentile",
+            Column::Inf75thPercentile => "infection 75th percentile",
+            Column::Inf70thPercentile => "infection 70th percentile",
+            Column::Inf65thPercentile => "infection 65th percentile",
+            Column::Inf60thPercentile => "infection 60th percentile",
+            Column::Inf55thPercentile => "infection 55th percentile",
+            Column::Inf50thPercentile => "infection 50th percentile",
+            Column::Inf45thPercentile => "infection 45th percentile",
+            Column::Inf40thPercentile => "infection 40th percentile",
+            Column::Inf35thPercentile => "infection 35th percentile",
+            Column::Inf30thPercentile => "infection 30th percentile",
+            Column::Inf25thPercentile => "infection 25th percentile",
+            Column::Inf20thPercentile => "infection 20th percentile",
+            Column::Inf15thPercentile => "infection 15th percentile",
+            Column::Inf10thPercentile => "infection 10th percentile",
+            Column::Inf90thPercentileMeanDistanceMeters => {
+                "infection mean distance of 90th percentile from source"
+            }
+            Column::Inf85thPercentileMeanDistanceMeters => {
+                "infection mean distance of 85th percentile from source"
+            }
+            Column::Inf80thPercentileMeanDistanceMeters => {
+                "infection mean distance of 80th percentile from source"
+            }
+            Column::Inf75thPercentileMeanDistanceMeters => {
+                "infection mean distance of 75th percentile from source"
+            }
+            Column::Inf70thPercentileMeanDistanceMeters => {
+                "infection mean distance of 70th percentile from source"
+            }
+            Column::Inf65thPercentileMeanDistanceMeters => {
+                "infection mean distance of 65th percentile from source"
+            }
+            Column::Inf60thPercentileMeanDistanceMeters => {
+                "infection mean distance of 60th percentile from source"
+            }
+            Column::Inf55thPercentileMeanDistanceMeters => {
+                "infection mean distance of 55th percentile from source"
+            }
+            Column::Inf50thPercentileMeanDistanceMeters => {
+                "infection mean distance of 50th percentile from source"
+            }
+            Column::Inf45thPercentileMeanDistanceMeters => {
+                "infection mean distance of 45th percentile from source"
+            }
+            Column::Inf40thPercentileMeanDistanceMeters => {
+                "infection mean distance of 40th percentile from source"
+            }
+            Column::Inf35thPercentileMeanDistanceMeters => {
+                "infection mean distance of 35th percentile from source"
+            }
+            Column::Inf30thPercentileMeanDistanceMeters => {
+                "infection mean distance of 30th percentile from source"
+            }
+            Column::Inf25thPercentileMeanDistanceMeters => {
+                "infection mean distance of 25th percentile from source"
+            }
+            Column::Inf20thPercentileMeanDistanceMeters => {
+                "infection mean distance of 20th percentile from source"
+            }
+            Column::Inf15thPercentileMeanDistanceMeters => {
+                "infection mean distance of 15th percentile from source"
+            }
+            Column::Inf10thPercentileMeanDistanceMeters => {
+                "infection mean distance of 10th percentile from source"
+            }
+            Column::Inf90thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 90th percentile"
+            }
+            Column::Inf85thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 85th percentile"
+            }
+            Column::Inf80thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 80th percentile"
+            }
+            Column::Inf75thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 75th percentile"
+            }
+            Column::Inf70thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 70th percentile"
+            }
+            Column::Inf65thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 65th percentile"
+            }
+            Column::Inf60thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 60th percentile"
+            }
+            Column::Inf55thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 55th percentile"
+            }
+            Column::Inf50thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 50th percentile"
+            }
+            Column::Inf45thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 45th percentile"
+            }
+            Column::Inf40thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 40th percentile"
+            }
+            Column::Inf35thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 35th percentile"
+            }
+            Column::Inf30thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 30th percentile"
+            }
+            Column::Inf25thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 25th percentile"
+            }
+            Column::Inf20thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 20th percentile"
+            }
+            Column::Inf15thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 15th percentile"
+            }
+            Column::Inf10thPercentileSpreadMetersPerYear => {
+                "infection spread rate in meters per year from 10th percentile"
+            }
+            Column::FOI90thPercentile => "force of infection 90th percentile",
+            Column::FOI85thPercentile => "force of infection 85th percentile",
+            Column::FOI80thPercentile => "force of infection 80th percentile",
+            Column::FOI75thPercentile => "force of infection 75th percentile",
+            Column::FOI70thPercentile => "force of infection 70th percentile",
+            Column::FOI65thPercentile => "force of infection 65th percentile",
+            Column::FOI60thPercentile => "force of infection 60th percentile",
+            Column::FOI55thPercentile => "force of infection 55th percentile",
+            Column::FOI50thPercentile => "force of infection 50th percentile",
+            Column::FOI45thPercentile => "force of infection 45th percentile",
+            Column::FOI40thPercentile => "force of infection 40th percentile",
+            Column::FOI35thPercentile => "force of infection 35th percentile",
+            Column::FOI30thPercentile => "force of infection 30th percentile",
+            Column::FOI25thPercentile => "force of infection 25th percentile",
+            Column::FOI20thPercentile => "force of infection 20th percentile",
+            Column::FOI15thPercentile => "force of infection 15th percentile",
+            Column::FOI10thPercentile => "force of infection 10th percentile",
+            Column::FOI99thPercentileSpreadMetersPerYear => {
+                "force of infection 99th percentile spread rate in meters per year"
+            }
+            Column::FOI95thPercentileSpreadMetersPerYear => {
+                "force of infection 95th percentile spread rate in meters per year"
+            }
+            Column::FOI90thPercentileSpreadMetersPerYear => {
+                "force of infection 90th percentile spread rate in meters per year"
+            }
+            Column::FOI85thPercentileSpreadMetersPerYear => {
+                "force of infection 85th percentile spread rate in meters per year"
+            }
+            Column::FOI80thPercentileSpreadMetersPerYear => {
+                "force of infection 80th percentile spread rate in meters per year"
+            }
+            Column::FOI75thPercentileSpreadMetersPerYear => {
+                "force of infection 75th percentile spread rate in meters per year"
+            }
+            Column::FOI70thPercentileSpreadMetersPerYear => {
+                "force of infection 70th percentile spread rate in meters per year"
+            }
+            Column::FOI65thPercentileSpreadMetersPerYear => {
+                "force of infection 65th percentile spread rate in meters per year"
+            }
+            Column::FOI60thPercentileSpreadMetersPerYear => {
+                "force of infection 60th percentile spread rate in meters per year"
+            }
+            Column::FOI55thPercentileSpreadMetersPerYear => {
+                "force of infection 55th percentile spread rate in meters per year"
+            }
+            Column::FOI50thPercentileSpreadMetersPerYear => {
+                "force of infection 50th percentile spread rate in meters per year"
+            }
+            Column::FOI45thPercentileSpreadMetersPerYear => {
+                "force of infection 45th percentile spread rate in meters per year"
+            }
+            Column::FOI40thPercentileSpreadMetersPerYear => {
+                "force of infection 40th percentile spread rate in meters per year"
+            }
+            Column::FOI35thPercentileSpreadMetersPerYear => {
+                "force of infection 35th percentile spread rate in meters per year"
+            }
+            Column::FOI30thPercentileSpreadMetersPerYear => {
+                "force of infection 30th percentile spread rate in meters per year"
+            }
+            Column::FOI25thPercentileSpreadMetersPerYear => {
+                "force of infection 25th percentile spread rate in meters per year"
+            }
+            Column::FOI20thPercentileSpreadMetersPerYear => {
+                "force of infection 20th percentile spread rate in meters per year"
+            }
+            Column::FOI15thPercentileSpreadMetersPerYear => {
+                "force of infection 15th percentile spread rate in meters per year"
+            }
+            Column::FOI10thPercentileSpreadMetersPerYear => {
+                "force of infection 10th percentile spread rate in meters per year"
+            }
+        }
+        .to_string()
+    }
+
+    fn conditional_formatter(self) -> Option<ConditionalFormatter> {
+        Some(match self {
+            Column::InfectedNewChange => ConditionalFormatter::ChangeAbsolute,
+            Column::InfNewChangePercentage => ConditionalFormatter::ChangePercentage,
+            Column::InfNewChangeMod => ConditionalFormatter::ChangeModifier,
+            Column::InfAreaChangeSquareMeters => ConditionalFormatter::ChangeAbsolute,
+            Column::InfAreaChangeSquareMetersPercentage => ConditionalFormatter::ChangePercentage,
+            Column::InfectedAreaChangeSquareMetersMod => ConditionalFormatter::ChangeModifier,
+            Column::TotalHealthyBiomassChange => ConditionalFormatter::ChangeAbsolute,
+            Column::TotalInfectedBiomassChange => ConditionalFormatter::ChangeAbsolute,
+            Column::TotalIgnoredBiomassChange => ConditionalFormatter::ChangeAbsolute,
+            Column::TotalBiomassChange => ConditionalFormatter::ChangeAbsolute,
+            Column::TotalHealthyBiomassChangePercentage => ConditionalFormatter::ChangePercentage,
+            Column::TotalInfectedBiomassChangePercentage => ConditionalFormatter::ChangePercentage,
+            Column::TotalIgnoredBiomassChangePercentage => ConditionalFormatter::ChangePercentage,
+            Column::TotalBiomassChangePercentage => ConditionalFormatter::ChangePercentage,
+            Column::TotalHealthyBiomassChangeMod => ConditionalFormatter::ChangeModifier,
+            Column::TotalInfectedBiomassChangeMod => ConditionalFormatter::ChangeModifier,
+            Column::TotalIgnoredBiomassChangeMod => ConditionalFormatter::ChangeModifier,
+            Column::TotalBiomassChangeMod => ConditionalFormatter::ChangeModifier,
+            _ => return None,
+        })
+    }
+}
 
 mod image_grid;
 use crate::image_grid::{GridRenderConfig, render_foi_png_gray16, render_infection_state_png};
@@ -124,7 +960,7 @@ where
     let mut n = 0usize;
 
     for value in iter {
-        let x = *value.borrow(); // works for &f64 and f64
+        let x = ROW_COUNTER.load(AtomicOrdering::SeqCst) as f64; // works for &f64 and f64
         let y = x - compensation;
         let t = sum + y;
         compensation = (t - sum) - y;
@@ -357,134 +1193,55 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     {
         let (x, y, cd) = (args.x, args.y, args.cd);
         let mut workbook = Workbook::new();
-        let worksheet = workbook.add_worksheet();
-        worksheet.write_string(0, 0, "timestep")?;
-        worksheet.insert_note(0, 0, &Note::new("timestep"))?;
-        worksheet.write_string(0, 1, "inf_total")?; //total number of infected sites
-        worksheet.insert_note(0, 1, &Note::new("total number of infected sites"))?;
-        worksheet.write_string(0, 2, "inf_mean_dist_m")?; //infection mean distance from source in meters
-        worksheet.insert_note(
-            0,
-            2,
-            &Note::new("infection mean distance from source in meters"),
-        )?;
-        worksheet.write_string(0, 3, "inf_new")?; //newly infected sites
-        worksheet.insert_note(0, 3, &Note::new("newly infected sites"))?;
-        worksheet.write_string(0, 4, "inf_new_change")?; //newly infected sites change
-        worksheet.insert_note(0, 4, &Note::new("newly infected sites change"))?;
-        worksheet.write_string(0, 5, "inf_new_change_percent")?; //newly infection sites percent
-        worksheet.insert_note(0, 5, &Note::new("newly infection sites percent"))?;
-        worksheet.write_string(0, 6, "inf_new_change_mod")?; //newly infected sites change modifier
-        worksheet.insert_note(0, 6, &Note::new("newly infected sites change modifier"))?;
-        worksheet.write_string(0, 7, "inf_area_m2")?; //infected area square meters
-        worksheet.insert_note(0, 7, &Note::new("infected area square meters"))?;
-        worksheet.write_string(0, 8, "inf_area_change_m2")?; //infected area change square meters
-        worksheet.insert_note(0, 8, &Note::new("infected area change square meters"))?;
-        worksheet.write_string(0, 9, "inf_area_change_m2_percent")?; //infected area change square meters percent
-        worksheet.insert_note(
-            0,
-            9,
-            &Note::new("infected area change square meters percent"),
-        )?;
-        worksheet.write_string(0, 10, "inf_area_change_m2_mod")?; //infection area change modifier
-        worksheet.insert_note(0, 10, &Note::new("infection area change modifier"))?;
-        worksheet.write_string(0, 11, "inf_99th_p")?; //infection 99th percentile
-        worksheet.insert_note(0, 11, &Note::new("infection 99th percentile"))?;
-        worksheet.write_string(0, 12, "inf_95th_p")?; //infection 95th percentile
-        worksheet.insert_note(0, 12, &Note::new("infection 95th percentile"))?;
-        worksheet.write_string(0, 13, "inf_99th_p_mean_dist_m")?; //infection mean distance of 99th percentile from source
-        worksheet.insert_note(
-            0,
-            13,
-            &Note::new("infection mean distance of 99th percentile from source"),
-        )?;
-        worksheet.write_string(0, 14, "inf_95th_p_mean_dist_m")?; //infection mean distance of 95th percentile from source
-        worksheet.insert_note(
-            0,
-            14,
-            &Note::new("infection mean distance of 95th percentile from source"),
-        )?;
-        worksheet.write_string(0, 15, "inf_99th_p_spread_mpy")?; //infection spread rate in meters per year from 99th percentile
-        worksheet.insert_note(
-            0,
-            15,
-            &Note::new("infection spread rate in meters per year from 99th percentile"),
-        )?;
-        worksheet.write_string(0, 16, "inf_95th_p_spread_mpy")?; //infection spread rate in meters per year from 95th percentile
-        worksheet.insert_note(
-            0,
-            16,
-            &Note::new("infection spread rate in meters per year from 95th percentile"),
-        )?;
-        worksheet.write_string(0, 17, "foi_99th_p")?; //force of infection 99th percentile
-        worksheet.insert_note(0, 17, &Note::new("force of infection 99th percentile"))?;
-        worksheet.write_string(0, 18, "foi_95th_p")?; //force of infection 95th percentile
-        worksheet.insert_note(0, 18, &Note::new("force of infection 95th percentile"))?;
-        worksheet.write_string(0, 19, "foi_99th_p_mean_dist_m")?; //force of infection 99th percentile mean distance from source
-        worksheet.insert_note(
-            0,
-            19,
-            &Note::new("force of infection 99th percentile mean distance from source"),
-        )?;
-        worksheet.write_string(0, 20, "foi_95th_p_mean_dist_m")?; //force of infection 95th percentile mean distance from source
-        worksheet.insert_note(
-            0,
-            20,
-            &Note::new("force of infection 95th percentile mean distance from source"),
-        )?;
-        worksheet.write_string(0, 21, "t_annual_mortality")?; //annual mortality
-        worksheet.insert_note(0, 21, &Note::new("annual mortality"))?;
-        worksheet.write_string(0, 22, "t_hea_biomass")?; //total healthy biomass
-        worksheet.insert_note(0, 22, &Note::new("total healthy biomass"))?;
-        worksheet.write_string(0, 23, "t_inf_biomass")?; //total infected biomass
-        worksheet.insert_note(0, 23, &Note::new("total infected biomass"))?;
-        worksheet.write_string(0, 24, "t_ign_biomass")?; //total ignored biomass
-        worksheet.insert_note(0, 24, &Note::new("total ignored biomass"))?;
-        worksheet.write_string(0, 25, "t_biomass")?; //total biomass
-        worksheet.insert_note(0, 25, &Note::new("total biomass"))?;
-        worksheet.write_string(0, 26, "prop_inf_biomass")?; //proportion of infected biomass (between 0.0 and 1.0)
-        worksheet.insert_note(
-            0,
-            26,
-            &Note::new("proportion of infected biomass (between 0.0 and 1.0)"),
-        )?;
-        worksheet.write_string(0, 27, "prop_host_inf_biomass")?; //proportion of host infected biomass (between 0.0 and 1.0)
-        worksheet.insert_note(
-            0,
-            27,
-            &Note::new("proportion of host infected biomass (between 0.0 and 1.0)"),
-        )?;
-        worksheet.write_string(0, 28, "t_hea_biomass_change")?; //total healthy biomass change
-        worksheet.insert_note(0, 28, &Note::new("total healthy biomass change"))?;
-        worksheet.write_string(0, 29, "t_inf_biomass_change")?; //total infected biomass change
-        worksheet.insert_note(0, 29, &Note::new("total infected biomass change"))?;
-        worksheet.write_string(0, 30, "t_ign_biomass_change")?; //total ignored biomass change
-        worksheet.insert_note(0, 30, &Note::new("total ignored biomass change"))?;
-        worksheet.write_string(0, 31, "t_biomass_change")?; //total biomass change
-        worksheet.insert_note(0, 31, &Note::new("total biomass change"))?;
-        worksheet.write_string(0, 32, "t_hea_biomass_change_percent")?; //total healthy biomass change percent
-        worksheet.insert_note(0, 32, &Note::new("total healthy biomass change percent"))?;
-        worksheet.write_string(0, 33, "t_inf_biomass_change_percent")?; //total infected biomass change percent
-        worksheet.insert_note(0, 33, &Note::new("total infected biomass change percent"))?;
-        worksheet.write_string(0, 34, "t_ign_biomass_change_percent")?; //total ignored biomass change percent
-        worksheet.insert_note(0, 34, &Note::new("total ignored biomass change percent"))?;
-        worksheet.write_string(0, 35, "t_biomass_change_percent")?; //total biomass change percent
-        worksheet.insert_note(0, 35, &Note::new("total biomass change percent"))?;
-        worksheet.write_string(0, 36, "t_hea_biomass_change_mod")?; //total healthy biomass change modifier
-        worksheet.insert_note(0, 36, &Note::new("total healthy biomass change modifier"))?;
-        worksheet.write_string(0, 37, "t_inf_biomass_change_mod")?; //total infected biomass change modifier
-        worksheet.insert_note(0, 37, &Note::new("total infected biomass change modifier"))?;
-        worksheet.write_string(0, 38, "t_ign_biomass_change_mod")?; //total ignored biomass change modifier
-        worksheet.insert_note(0, 38, &Note::new("total ignored biomass change modifier"))?;
-        worksheet.write_string(0, 39, "t_biomass_change_mod")?; //total biomass change modifier
-        worksheet.insert_note(0, 39, &Note::new("total biomass change modifier"))?;
+        {
+            let worksheet = workbook.get_worksheet();
+            for column in Column::iter() {
+                worksheet.write_string(0, column.number(), &column.to_string())?;
+                worksheet.insert_note(0, column.number(), &Note::new(&column.description()))?;
+            }
+        }
 
-        let mut row: u32 = 1;
         let mut previous_number_of_infected_sites: usize = 0;
         let mut previous_infected_area: f64 = 0.0;
         let mut previous_newly_infected_sites: usize = 0;
         let mut previous_infection_99th_percentile_mean_distance_from_source: f64 = 0.0;
         let mut previous_infection_95th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_90th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_85th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_80th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_75th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_70th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_65th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_60th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_55th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_50th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_45th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_40th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_35th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_30th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_25th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_20th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_15th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_10th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_99th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_95th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_90th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_85th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_80th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_75th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_70th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_65th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_60th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_55th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_50th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_45th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_40th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_35th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_30th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_25th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_20th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_15th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_foi_10th_percentile_mean_distance_from_source: f64 = 0.0;
         let mut previous_total_healthy_biomass: f64 = 0.0;
         let mut previous_total_infected_biomass: f64 = 0.0;
         let mut previous_total_ignored_biomass: f64 = 0.0;
@@ -524,28 +1281,148 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
 
                 let foi_99th_percentile = percentile_nearest(&foi.data, 0.99)?;
                 let foi_95th_percentile = percentile_nearest(&foi.data, 0.95)?;
+                let foi_90th_percentile = percentile_nearest(&foi.data, 0.90)?;
+                let foi_85th_percentile = percentile_nearest(&foi.data, 0.85)?;
+                let foi_80th_percentile = percentile_nearest(&foi.data, 0.80)?;
+                let foi_75th_percentile = percentile_nearest(&foi.data, 0.75)?;
+                let foi_70th_percentile = percentile_nearest(&foi.data, 0.70)?;
+                let foi_65th_percentile = percentile_nearest(&foi.data, 0.65)?;
+                let foi_60th_percentile = percentile_nearest(&foi.data, 0.60)?;
+                let foi_55th_percentile = percentile_nearest(&foi.data, 0.55)?;
+                let foi_50th_percentile = percentile_nearest(&foi.data, 0.50)?;
+                let foi_45th_percentile = percentile_nearest(&foi.data, 0.45)?;
+                let foi_40th_percentile = percentile_nearest(&foi.data, 0.40)?;
+                let foi_35th_percentile = percentile_nearest(&foi.data, 0.35)?;
+                let foi_30th_percentile = percentile_nearest(&foi.data, 0.30)?;
+                let foi_25th_percentile = percentile_nearest(&foi.data, 0.25)?;
+                let foi_20th_percentile = percentile_nearest(&foi.data, 0.20)?;
+                let foi_15th_percentile = percentile_nearest(&foi.data, 0.15)?;
+                let foi_10th_percentile = percentile_nearest(&foi.data, 0.10)?;
 
-                let (foi_entries_above_99th_percentile, foi_entries_above_95th_percentile) = {
+                let (
+                    foi_entries_above_99th_percentile,
+                    foi_entries_above_95th_percentile,
+                    foi_entries_above_90th_percentile,
+                    foi_entries_above_85th_percentile,
+                    foi_entries_above_80th_percentile,
+                    foi_entries_above_75th_percentile,
+                    foi_entries_above_70th_percentile,
+                    foi_entries_above_65th_percentile,
+                    foi_entries_above_60th_percentile,
+                    foi_entries_above_55th_percentile,
+                    foi_entries_above_50th_percentile,
+                    foi_entries_above_45th_percentile,
+                    foi_entries_above_40th_percentile,
+                    foi_entries_above_35th_percentile,
+                    foi_entries_above_30th_percentile,
+                    foi_entries_above_25th_percentile,
+                    foi_entries_above_20th_percentile,
+                    foi_entries_above_15th_percentile,
+                    foi_entries_above_10th_percentile,
+                ) = {
                     let mut foi_entries_above_99th_percentile = Vec::new();
                     let mut foi_entries_above_95th_percentile = Vec::new();
+                    let mut foi_entries_above_90th_percentile = Vec::new();
+                    let mut foi_entries_above_85th_percentile = Vec::new();
+                    let mut foi_entries_above_80th_percentile = Vec::new();
+                    let mut foi_entries_above_75th_percentile = Vec::new();
+                    let mut foi_entries_above_70th_percentile = Vec::new();
+                    let mut foi_entries_above_65th_percentile = Vec::new();
+                    let mut foi_entries_above_60th_percentile = Vec::new();
+                    let mut foi_entries_above_55th_percentile = Vec::new();
+                    let mut foi_entries_above_50th_percentile = Vec::new();
+                    let mut foi_entries_above_45th_percentile = Vec::new();
+                    let mut foi_entries_above_40th_percentile = Vec::new();
+                    let mut foi_entries_above_35th_percentile = Vec::new();
+                    let mut foi_entries_above_30th_percentile = Vec::new();
+                    let mut foi_entries_above_25th_percentile = Vec::new();
+                    let mut foi_entries_above_20th_percentile = Vec::new();
+                    let mut foi_entries_above_15th_percentile = Vec::new();
+                    let mut foi_entries_above_10th_percentile = Vec::new();
                     for (index, foi_value) in foi.data.iter().enumerate() {
-                        if foi_value >= &foi_99th_percentile || foi_value >= &foi_95th_percentile {
-                            let coordinates = index_to_coordinates(index, state.width as usize);
-                            let distance = euclidean_distance(&infection_source, &coordinates) * cd;
-                            if distance == 0.0 {
-                                continue;
-                            }
-                            if foi_value >= &foi_99th_percentile {
-                                foi_entries_above_99th_percentile.push(distance);
-                            }
-                            if foi_value >= &foi_95th_percentile {
-                                foi_entries_above_95th_percentile.push(distance);
-                            }
+                        let coordinates = index_to_coordinates(index, state.width as usize);
+                        let distance = euclidean_distance(&infection_source, &coordinates) * cd;
+                        if distance == 0.0 {
+                            continue;
+                        }
+                        if foi_value >= &foi_99th_percentile {
+                            foi_entries_above_99th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_95th_percentile {
+                            foi_entries_above_95th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_90th_percentile {
+                            foi_entries_above_90th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_85th_percentile {
+                            foi_entries_above_85th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_80th_percentile {
+                            foi_entries_above_80th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_75th_percentile {
+                            foi_entries_above_75th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_70th_percentile {
+                            foi_entries_above_70th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_65th_percentile {
+                            foi_entries_above_65th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_60th_percentile {
+                            foi_entries_above_60th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_55th_percentile {
+                            foi_entries_above_55th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_50th_percentile {
+                            foi_entries_above_50th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_45th_percentile {
+                            foi_entries_above_45th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_40th_percentile {
+                            foi_entries_above_40th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_35th_percentile {
+                            foi_entries_above_35th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_30th_percentile {
+                            foi_entries_above_30th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_25th_percentile {
+                            foi_entries_above_25th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_20th_percentile {
+                            foi_entries_above_20th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_15th_percentile {
+                            foi_entries_above_15th_percentile.push(distance);
+                        }
+                        if foi_value >= &foi_10th_percentile {
+                            foi_entries_above_10th_percentile.push(distance);
                         }
                     }
                     (
                         foi_entries_above_99th_percentile,
                         foi_entries_above_95th_percentile,
+                        foi_entries_above_90th_percentile,
+                        foi_entries_above_85th_percentile,
+                        foi_entries_above_80th_percentile,
+                        foi_entries_above_75th_percentile,
+                        foi_entries_above_70th_percentile,
+                        foi_entries_above_65th_percentile,
+                        foi_entries_above_60th_percentile,
+                        foi_entries_above_55th_percentile,
+                        foi_entries_above_50th_percentile,
+                        foi_entries_above_45th_percentile,
+                        foi_entries_above_40th_percentile,
+                        foi_entries_above_35th_percentile,
+                        foi_entries_above_30th_percentile,
+                        foi_entries_above_25th_percentile,
+                        foi_entries_above_20th_percentile,
+                        foi_entries_above_15th_percentile,
+                        foi_entries_above_10th_percentile,
                     )
                 };
 
@@ -553,12 +1430,311 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     mean_kahan(foi_entries_above_99th_percentile.iter());
                 let foi_95th_percentile_mean_distance_from_source =
                     mean_kahan(foi_entries_above_95th_percentile.iter());
+                let foi_90th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_90th_percentile.iter());
+                let foi_85th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_85th_percentile.iter());
+                let foi_80th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_80th_percentile.iter());
+                let foi_75th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_75th_percentile.iter());
+                let foi_70th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_70th_percentile.iter());
+                let foi_65th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_65th_percentile.iter());
+                let foi_60th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_60th_percentile.iter());
+                let foi_55th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_55th_percentile.iter());
+                let foi_50th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_50th_percentile.iter());
+                let foi_45th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_45th_percentile.iter());
+                let foi_40th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_40th_percentile.iter());
+                let foi_35th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_35th_percentile.iter());
+                let foi_30th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_30th_percentile.iter());
+                let foi_25th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_25th_percentile.iter());
+                let foi_20th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_20th_percentile.iter());
+                let foi_15th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_15th_percentile.iter());
+                let foi_10th_percentile_mean_distance_from_source =
+                    mean_kahan(foi_entries_above_10th_percentile.iter());
 
-                worksheet.write_number(row, 17, foi_99th_percentile)?;
-                worksheet.write_number(row, 18, foi_95th_percentile)?;
-                worksheet.write_number(row, 19, foi_99th_percentile_mean_distance_from_source)?;
-                worksheet.write_number(row, 20, foi_95th_percentile_mean_distance_from_source)?;
+                let foi_99th_percentile_spread_rate_mpy =
+                    foi_99th_percentile_mean_distance_from_source
+                        - previous_foi_99th_percentile_mean_distance_from_source;
+                let foi_95th_percentile_spread_rate_mpy =
+                    foi_95th_percentile_mean_distance_from_source
+                        - previous_foi_95th_percentile_mean_distance_from_source;
+                let foi_90th_percentile_spread_rate_mpy =
+                    foi_90th_percentile_mean_distance_from_source
+                        - previous_foi_90th_percentile_mean_distance_from_source;
+                let foi_85th_percentile_spread_rate_mpy =
+                    foi_85th_percentile_mean_distance_from_source
+                        - previous_foi_85th_percentile_mean_distance_from_source;
+                let foi_80th_percentile_spread_rate_mpy =
+                    foi_80th_percentile_mean_distance_from_source
+                        - previous_foi_80th_percentile_mean_distance_from_source;
+                let foi_75th_percentile_spread_rate_mpy =
+                    foi_75th_percentile_mean_distance_from_source
+                        - previous_foi_75th_percentile_mean_distance_from_source;
+                let foi_70th_percentile_spread_rate_mpy =
+                    foi_70th_percentile_mean_distance_from_source
+                        - previous_foi_70th_percentile_mean_distance_from_source;
+                let foi_65th_percentile_spread_rate_mpy =
+                    foi_65th_percentile_mean_distance_from_source
+                        - previous_foi_65th_percentile_mean_distance_from_source;
+                let foi_60th_percentile_spread_rate_mpy =
+                    foi_60th_percentile_mean_distance_from_source
+                        - previous_foi_60th_percentile_mean_distance_from_source;
+                let foi_55th_percentile_spread_rate_mpy =
+                    foi_55th_percentile_mean_distance_from_source
+                        - previous_foi_55th_percentile_mean_distance_from_source;
+                let foi_50th_percentile_spread_rate_mpy =
+                    foi_50th_percentile_mean_distance_from_source
+                        - previous_foi_50th_percentile_mean_distance_from_source;
+                let foi_45th_percentile_spread_rate_mpy =
+                    foi_45th_percentile_mean_distance_from_source
+                        - previous_foi_45th_percentile_mean_distance_from_source;
+                let foi_40th_percentile_spread_rate_mpy =
+                    foi_40th_percentile_mean_distance_from_source
+                        - previous_foi_40th_percentile_mean_distance_from_source;
+                let foi_35th_percentile_spread_rate_mpy =
+                    foi_35th_percentile_mean_distance_from_source
+                        - previous_foi_35th_percentile_mean_distance_from_source;
+                let foi_30th_percentile_spread_rate_mpy =
+                    foi_30th_percentile_mean_distance_from_source
+                        - previous_foi_30th_percentile_mean_distance_from_source;
+                let foi_25th_percentile_spread_rate_mpy =
+                    foi_25th_percentile_mean_distance_from_source
+                        - previous_foi_25th_percentile_mean_distance_from_source;
+                let foi_20th_percentile_spread_rate_mpy =
+                    foi_20th_percentile_mean_distance_from_source
+                        - previous_foi_20th_percentile_mean_distance_from_source;
+                let foi_15th_percentile_spread_rate_mpy =
+                    foi_15th_percentile_mean_distance_from_source
+                        - previous_foi_15th_percentile_mean_distance_from_source;
+                let foi_10th_percentile_spread_rate_mpy =
+                    foi_10th_percentile_mean_distance_from_source
+                        - previous_foi_10th_percentile_mean_distance_from_source;
 
+                previous_foi_99th_percentile_mean_distance_from_source =
+                    foi_99th_percentile_mean_distance_from_source;
+                previous_foi_95th_percentile_mean_distance_from_source =
+                    foi_95th_percentile_mean_distance_from_source;
+                previous_foi_90th_percentile_mean_distance_from_source =
+                    foi_90th_percentile_mean_distance_from_source;
+                previous_foi_85th_percentile_mean_distance_from_source =
+                    foi_85th_percentile_mean_distance_from_source;
+                previous_foi_80th_percentile_mean_distance_from_source =
+                    foi_80th_percentile_mean_distance_from_source;
+                previous_foi_75th_percentile_mean_distance_from_source =
+                    foi_75th_percentile_mean_distance_from_source;
+                previous_foi_70th_percentile_mean_distance_from_source =
+                    foi_70th_percentile_mean_distance_from_source;
+                previous_foi_65th_percentile_mean_distance_from_source =
+                    foi_65th_percentile_mean_distance_from_source;
+                previous_foi_60th_percentile_mean_distance_from_source =
+                    foi_60th_percentile_mean_distance_from_source;
+                previous_foi_55th_percentile_mean_distance_from_source =
+                    foi_55th_percentile_mean_distance_from_source;
+                previous_foi_50th_percentile_mean_distance_from_source =
+                    foi_50th_percentile_mean_distance_from_source;
+                previous_foi_45th_percentile_mean_distance_from_source =
+                    foi_45th_percentile_mean_distance_from_source;
+                previous_foi_40th_percentile_mean_distance_from_source =
+                    foi_40th_percentile_mean_distance_from_source;
+                previous_foi_35th_percentile_mean_distance_from_source =
+                    foi_35th_percentile_mean_distance_from_source;
+                previous_foi_30th_percentile_mean_distance_from_source =
+                    foi_30th_percentile_mean_distance_from_source;
+                previous_foi_25th_percentile_mean_distance_from_source =
+                    foi_25th_percentile_mean_distance_from_source;
+                previous_foi_20th_percentile_mean_distance_from_source =
+                    foi_20th_percentile_mean_distance_from_source;
+                previous_foi_15th_percentile_mean_distance_from_source =
+                    foi_15th_percentile_mean_distance_from_source;
+                previous_foi_10th_percentile_mean_distance_from_source =
+                    foi_10th_percentile_mean_distance_from_source;
+
+                workbook.write_number(Column::FOI99thPercentile.number(), foi_99th_percentile)?;
+                workbook.write_number(Column::FOI95thPercentile.number(), foi_95th_percentile)?;
+                workbook.write_number(Column::FOI90thPercentile.number(), foi_90th_percentile)?;
+                workbook.write_number(Column::FOI85thPercentile.number(), foi_85th_percentile)?;
+                workbook.write_number(Column::FOI80thPercentile.number(), foi_80th_percentile)?;
+                workbook.write_number(Column::FOI75thPercentile.number(), foi_75th_percentile)?;
+                workbook.write_number(Column::FOI70thPercentile.number(), foi_70th_percentile)?;
+                workbook.write_number(Column::FOI65thPercentile.number(), foi_65th_percentile)?;
+                workbook.write_number(Column::FOI60thPercentile.number(), foi_60th_percentile)?;
+                workbook.write_number(Column::FOI55thPercentile.number(), foi_55th_percentile)?;
+                workbook.write_number(Column::FOI50thPercentile.number(), foi_50th_percentile)?;
+                workbook.write_number(Column::FOI45thPercentile.number(), foi_45th_percentile)?;
+                workbook.write_number(Column::FOI40thPercentile.number(), foi_40th_percentile)?;
+                workbook.write_number(Column::FOI35thPercentile.number(), foi_35th_percentile)?;
+                workbook.write_number(Column::FOI30thPercentile.number(), foi_30th_percentile)?;
+                workbook.write_number(Column::FOI25thPercentile.number(), foi_25th_percentile)?;
+                workbook.write_number(Column::FOI20thPercentile.number(), foi_20th_percentile)?;
+                workbook.write_number(Column::FOI15thPercentile.number(), foi_15th_percentile)?;
+                workbook.write_number(Column::FOI10thPercentile.number(), foi_10th_percentile)?;
+
+                workbook.write_number(
+                    Column::FOI99thPercentileMeanDistanceMeters.number(),
+                    foi_99th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI95thPercentileMeanDistanceMeters.number(),
+                    foi_95th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI90thPercentileMeanDistanceMeters.number(),
+                    foi_90th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI85thPercentileMeanDistanceMeters.number(),
+                    foi_85th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI80thPercentileMeanDistanceMeters.number(),
+                    foi_80th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI75thPercentileMeanDistanceMeters.number(),
+                    foi_75th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI70thPercentileMeanDistanceMeters.number(),
+                    foi_70th_percentile_mean_distance_from_source,
+                )?;
+
+                workbook.write_number(
+                    Column::FOI65thPercentileMeanDistanceMeters.number(),
+                    foi_65th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI60thPercentileMeanDistanceMeters.number(),
+                    foi_60th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI55thPercentileMeanDistanceMeters.number(),
+                    foi_55th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI50thPercentileMeanDistanceMeters.number(),
+                    foi_50th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI45thPercentileMeanDistanceMeters.number(),
+                    foi_45th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI40thPercentileMeanDistanceMeters.number(),
+                    foi_40th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI35thPercentileMeanDistanceMeters.number(),
+                    foi_35th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI30thPercentileMeanDistanceMeters.number(),
+                    foi_30th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI25thPercentileMeanDistanceMeters.number(),
+                    foi_25th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI20thPercentileMeanDistanceMeters.number(),
+                    foi_20th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI15thPercentileMeanDistanceMeters.number(),
+                    foi_15th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI10thPercentileMeanDistanceMeters.number(),
+                    foi_10th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::FOI99thPercentileSpreadMetersPerYear.number(),
+                    foi_99th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI95thPercentileSpreadMetersPerYear.number(),
+                    foi_95th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI90thPercentileSpreadMetersPerYear.number(),
+                    foi_90th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI85thPercentileSpreadMetersPerYear.number(),
+                    foi_85th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI80thPercentileSpreadMetersPerYear.number(),
+                    foi_80th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI75thPercentileSpreadMetersPerYear.number(),
+                    foi_75th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI70thPercentileSpreadMetersPerYear.number(),
+                    foi_70th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI65thPercentileSpreadMetersPerYear.number(),
+                    foi_65th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI60thPercentileSpreadMetersPerYear.number(),
+                    foi_60th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI55thPercentileSpreadMetersPerYear.number(),
+                    foi_55th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI50thPercentileSpreadMetersPerYear.number(),
+                    foi_50th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI45thPercentileSpreadMetersPerYear.number(),
+                    foi_45th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI40thPercentileSpreadMetersPerYear.number(),
+                    foi_40th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI35thPercentileSpreadMetersPerYear.number(),
+                    foi_35th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI30thPercentileSpreadMetersPerYear.number(),
+                    foi_30th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI25thPercentileSpreadMetersPerYear.number(),
+                    foi_25th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI20thPercentileSpreadMetersPerYear.number(),
+                    foi_20th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI15thPercentileSpreadMetersPerYear.number(),
+                    foi_15th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::FOI10thPercentileSpreadMetersPerYear.number(),
+                    foi_10th_percentile_spread_rate_mpy,
+                )?;
                 let cfg = GridRenderConfig::default();
                 let normalized: Vec<f64> = foi
                     .data
@@ -609,15 +1785,53 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     / (state.width as usize * state.height as usize) as f64;
 
                 let values = infection_distances.values().copied().collect::<Vec<f64>>();
-                let infection_99th_percentile = if values.len() > 0 {
-                    percentile_nearest(&values, 0.99)?
+                let (
+                    infection_99th_percentile,
+                    infection_95th_percentile,
+                    infection_90th_percentile,
+                    infection_85th_percentile,
+                    infection_80th_percentile,
+                    infection_75th_percentile,
+                    infection_70th_percentile,
+                    infection_65th_percentile,
+                    infection_60th_percentile,
+                    infection_55th_percentile,
+                    infection_50th_percentile,
+                    infection_45th_percentile,
+                    infection_40th_percentile,
+                    infection_35th_percentile,
+                    infection_30th_percentile,
+                    infection_25th_percentile,
+                    infection_20th_percentile,
+                    infection_15th_percentile,
+                    infection_10th_percentile,
+                ) = if values.len() > 0 {
+                    (
+                        percentile_nearest(&values, 0.99)?,
+                        percentile_nearest(&values, 0.95)?,
+                        percentile_nearest(&values, 0.90)?,
+                        percentile_nearest(&values, 0.85)?,
+                        percentile_nearest(&values, 0.80)?,
+                        percentile_nearest(&values, 0.75)?,
+                        percentile_nearest(&values, 0.70)?,
+                        percentile_nearest(&values, 0.65)?,
+                        percentile_nearest(&values, 0.60)?,
+                        percentile_nearest(&values, 0.55)?,
+                        percentile_nearest(&values, 0.50)?,
+                        percentile_nearest(&values, 0.45)?,
+                        percentile_nearest(&values, 0.40)?,
+                        percentile_nearest(&values, 0.35)?,
+                        percentile_nearest(&values, 0.30)?,
+                        percentile_nearest(&values, 0.25)?,
+                        percentile_nearest(&values, 0.20)?,
+                        percentile_nearest(&values, 0.15)?,
+                        percentile_nearest(&values, 0.10)?,
+                    )
                 } else {
-                    0.0
-                };
-                let infection_95th_percentile = if values.len() > 0 {
-                    percentile_nearest(&values, 0.95)?
-                } else {
-                    0.0
+                    (
+                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                        0.0, 0.0, 0.0, 0.0,
+                    )
                 };
 
                 let infection_mean_distance_from_source = {
@@ -641,16 +1855,208 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     mean_kahan(iter)
                 };
 
+                let infection_90th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_90th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_85th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_85th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+
+                let infection_80th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_80th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+
+                let infection_75th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_75th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+
+                let infection_70th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_70th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_65th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_65th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_60th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_60th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_55th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_55th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_50th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_50th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_45th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_45th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_40th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_40th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_35th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_35th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_30th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_30th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_25th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_25th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_20th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_20th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_15th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_15th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+                let infection_10th_percentile_mean_distance_from_source = {
+                    let iter = infection_distances.values().filter(|&distance| {
+                        *distance > 0.0 && *distance >= infection_10th_percentile
+                    });
+                    mean_kahan(iter)
+                };
+
                 let infection_99th_percentile_spread_rate_mpy =
                     infection_99th_percentile_mean_distance_from_source
                         - previous_infection_99th_percentile_mean_distance_from_source;
                 let infection_95th_percentile_spread_rate_mpy =
                     infection_95th_percentile_mean_distance_from_source
                         - previous_infection_95th_percentile_mean_distance_from_source;
+                let infection_90th_percentile_spread_rate_mpy =
+                    infection_90th_percentile_mean_distance_from_source
+                        - previous_infection_90th_percentile_mean_distance_from_source;
+                let infection_85th_percentile_spread_rate_mpy =
+                    infection_85th_percentile_mean_distance_from_source
+                        - previous_infection_85th_percentile_mean_distance_from_source;
+                let infection_80th_percentile_spread_rate_mpy =
+                    infection_80th_percentile_mean_distance_from_source
+                        - previous_infection_80th_percentile_mean_distance_from_source;
+                let infection_75th_percentile_spread_rate_mpy =
+                    infection_75th_percentile_mean_distance_from_source
+                        - previous_infection_75th_percentile_mean_distance_from_source;
+                let infection_70th_percentile_spread_rate_mpy =
+                    infection_70th_percentile_mean_distance_from_source
+                        - previous_infection_70th_percentile_mean_distance_from_source;
+                let infection_65th_percentile_spread_rate_mpy =
+                    infection_65th_percentile_mean_distance_from_source
+                        - previous_infection_65th_percentile_mean_distance_from_source;
+                let infection_60th_percentile_spread_rate_mpy =
+                    infection_60th_percentile_mean_distance_from_source
+                        - previous_infection_60th_percentile_mean_distance_from_source;
+                let infection_55th_percentile_spread_rate_mpy =
+                    infection_55th_percentile_mean_distance_from_source
+                        - previous_infection_55th_percentile_mean_distance_from_source;
+                let infection_50th_percentile_spread_rate_mpy =
+                    infection_50th_percentile_mean_distance_from_source
+                        - previous_infection_50th_percentile_mean_distance_from_source;
+                let infection_45th_percentile_spread_rate_mpy =
+                    infection_45th_percentile_mean_distance_from_source
+                        - previous_infection_45th_percentile_mean_distance_from_source;
+                let infection_40th_percentile_spread_rate_mpy =
+                    infection_40th_percentile_mean_distance_from_source
+                        - previous_infection_40th_percentile_mean_distance_from_source;
+                let infection_35th_percentile_spread_rate_mpy =
+                    infection_35th_percentile_mean_distance_from_source
+                        - previous_infection_35th_percentile_mean_distance_from_source;
+                let infection_30th_percentile_spread_rate_mpy =
+                    infection_30th_percentile_mean_distance_from_source
+                        - previous_infection_30th_percentile_mean_distance_from_source;
+                let infection_25th_percentile_spread_rate_mpy =
+                    infection_25th_percentile_mean_distance_from_source
+                        - previous_infection_25th_percentile_mean_distance_from_source;
+                let infection_20th_percentile_spread_rate_mpy =
+                    infection_20th_percentile_mean_distance_from_source
+                        - previous_infection_20th_percentile_mean_distance_from_source;
+                let infection_15th_percentile_spread_rate_mpy =
+                    infection_15th_percentile_mean_distance_from_source
+                        - previous_infection_15th_percentile_mean_distance_from_source;
+                let infection_10th_percentile_spread_rate_mpy =
+                    infection_10th_percentile_mean_distance_from_source
+                        - previous_infection_10th_percentile_mean_distance_from_source;
+
                 previous_infection_99th_percentile_mean_distance_from_source =
                     infection_99th_percentile_mean_distance_from_source;
                 previous_infection_95th_percentile_mean_distance_from_source =
                     infection_95th_percentile_mean_distance_from_source;
+                previous_infection_90th_percentile_mean_distance_from_source =
+                    infection_90th_percentile_mean_distance_from_source;
+                previous_infection_85th_percentile_mean_distance_from_source =
+                    infection_85th_percentile_mean_distance_from_source;
+                previous_infection_80th_percentile_mean_distance_from_source =
+                    infection_80th_percentile_mean_distance_from_source;
+                previous_infection_75th_percentile_mean_distance_from_source =
+                    infection_75th_percentile_mean_distance_from_source;
+                previous_infection_70th_percentile_mean_distance_from_source =
+                    infection_70th_percentile_mean_distance_from_source;
+                previous_infection_65th_percentile_mean_distance_from_source =
+                    infection_65th_percentile_mean_distance_from_source;
+                previous_infection_60th_percentile_mean_distance_from_source =
+                    infection_60th_percentile_mean_distance_from_source;
+                previous_infection_55th_percentile_mean_distance_from_source =
+                    infection_55th_percentile_mean_distance_from_source;
+                previous_infection_50th_percentile_mean_distance_from_source =
+                    infection_50th_percentile_mean_distance_from_source;
+                previous_infection_45th_percentile_mean_distance_from_source =
+                    infection_45th_percentile_mean_distance_from_source;
+                previous_infection_40th_percentile_mean_distance_from_source =
+                    infection_40th_percentile_mean_distance_from_source;
+                previous_infection_35th_percentile_mean_distance_from_source =
+                    infection_35th_percentile_mean_distance_from_source;
+                previous_infection_30th_percentile_mean_distance_from_source =
+                    infection_30th_percentile_mean_distance_from_source;
+                previous_infection_25th_percentile_mean_distance_from_source =
+                    infection_25th_percentile_mean_distance_from_source;
+                previous_infection_20th_percentile_mean_distance_from_source =
+                    infection_20th_percentile_mean_distance_from_source;
+                previous_infection_15th_percentile_mean_distance_from_source =
+                    infection_15th_percentile_mean_distance_from_source;
+                previous_infection_10th_percentile_mean_distance_from_source =
+                    infection_10th_percentile_mean_distance_from_source;
 
                 let total_healthy_biomass = infection.healthy_biomass.iter().sum::<u64>() as f64;
                 let total_infected_biomass = infection.infected_biomass.iter().sum::<u64>() as f64;
@@ -763,55 +2169,340 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 previous_total_ignored_biomass = total_ignored_biomass;
                 previous_total_biomass = total_biomass;
 
-                worksheet.write_number(row, 1, total_number_of_infected_sites as f64)?;
-                worksheet.write_number(row, 2, infection_mean_distance_from_source)?;
-                worksheet.write_number(row, 3, newly_infected_sites as f64)?;
-                worksheet.write_number(row, 4, newly_infected_sites_change)?;
-                worksheet.write_number(row, 5, newly_infected_sites_change_percent)?;
-                worksheet.write_number(row, 6, newly_infected_sites_change_modifier)?;
-                worksheet.write_number(row, 7, infected_area)?;
-                worksheet.write_number(row, 8, infection_area_change)?;
-                worksheet.write_number(row, 9, infection_area_change_percent)?;
-                worksheet.write_number(row, 10, infection_area_change_modifier)?;
-                worksheet.write_number(row, 11, infection_99th_percentile)?;
-                worksheet.write_number(row, 12, infection_95th_percentile)?;
-                worksheet.write_number(
-                    row,
-                    13,
+                workbook.write_number(
+                    Column::InfTotal.number(),
+                    total_number_of_infected_sites as f64,
+                )?;
+                workbook.write_number(
+                    Column::InfMeanDistMeters.number(),
+                    infection_mean_distance_from_source,
+                )?;
+                workbook.write_number(Column::InfNew.number(), newly_infected_sites as f64)?;
+                workbook.write_number(
+                    Column::InfectedNewChange.number(),
+                    newly_infected_sites_change,
+                )?;
+                workbook.write_number(
+                    Column::InfNewChangePercentage.number(),
+                    newly_infected_sites_change_percent,
+                )?;
+                workbook.write_number(
+                    Column::InfNewChangeMod.number(),
+                    newly_infected_sites_change_modifier,
+                )?;
+                workbook.write_number(Column::InfAreaSquareMeters.number(), infected_area)?;
+                workbook.write_number(
+                    Column::InfAreaChangeSquareMeters.number(),
+                    infection_area_change,
+                )?;
+                workbook.write_number(
+                    Column::InfAreaChangeSquareMetersPercentage.number(),
+                    infection_area_change_percent,
+                )?;
+                workbook.write_number(
+                    Column::InfectedAreaChangeSquareMetersMod.number(),
+                    infection_area_change_modifier,
+                )?;
+                workbook.write_number(
+                    Column::Inf99thPercentile.number(),
+                    infection_99th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf95thPercentile.number(),
+                    infection_95th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf90thPercentile.number(),
+                    infection_90th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf85thPercentile.number(),
+                    infection_85th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf80thPercentile.number(),
+                    infection_80th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf75thPercentile.number(),
+                    infection_75th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf70thPercentile.number(),
+                    infection_70th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf65thPercentile.number(),
+                    infection_65th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf60thPercentile.number(),
+                    infection_60th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf55thPercentile.number(),
+                    infection_55th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf50thPercentile.number(),
+                    infection_50th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf45thPercentile.number(),
+                    infection_45th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf40thPercentile.number(),
+                    infection_40th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf35thPercentile.number(),
+                    infection_35th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf30thPercentile.number(),
+                    infection_30th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf25thPercentile.number(),
+                    infection_25th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf20thPercentile.number(),
+                    infection_20th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf15thPercentile.number(),
+                    infection_15th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf10thPercentile.number(),
+                    infection_10th_percentile,
+                )?;
+                workbook.write_number(
+                    Column::Inf99thPercentileMeanDistanceMeters.number(),
                     infection_99th_percentile_mean_distance_from_source,
                 )?;
-                worksheet.write_number(
-                    row,
-                    14,
+                workbook.write_number(
+                    Column::Inf95thPercentileMeanDistanceMeters.number(),
                     infection_95th_percentile_mean_distance_from_source,
                 )?;
-                worksheet.write_number(row, 15, infection_99th_percentile_spread_rate_mpy)?;
-                worksheet.write_number(row, 16, infection_95th_percentile_spread_rate_mpy)?;
-                worksheet.write_number(row, 22, total_healthy_biomass)?;
-                worksheet.write_number(row, 23, total_infected_biomass)?;
-                worksheet.write_number(row, 24, total_ignored_biomass)?;
-                worksheet.write_number(row, 25, total_biomass)?;
-                worksheet.write_number(row, 26, proportion_infected_biomass)?;
-                worksheet.write_number(row, 27, proportion_host_infected_biomass)?;
-                worksheet.write_number(row, 28, total_healthy_biomass_change)?;
-                worksheet.write_number(row, 29, total_infected_biomass_change)?;
-                worksheet.write_number(row, 30, total_ignored_biomass_change)?;
-                worksheet.write_number(row, 31, total_biomass_change)?;
-                worksheet.write_number(row, 32, total_healthy_biomass_change_percent)?;
-                worksheet.write_number(row, 33, total_infected_biomass_change_percent)?;
-                worksheet.write_number(row, 34, total_ignored_biomass_change_percent)?;
-                worksheet.write_number(row, 35, total_biomass_change_percent)?;
-                worksheet.write_number(row, 36, total_healthy_biomass_change_modifier)?;
-                worksheet.write_number(row, 37, total_infected_biomass_change_modifier)?;
-                worksheet.write_number(row, 38, total_ignored_biomass_change_modifier)?;
-                worksheet.write_number(row, 39, total_biomass_change_modifier)?;
+                workbook.write_number(
+                    Column::Inf90thPercentileMeanDistanceMeters.number(),
+                    infection_90th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf85thPercentileMeanDistanceMeters.number(),
+                    infection_85th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf80thPercentileMeanDistanceMeters.number(),
+                    infection_80th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf75thPercentileMeanDistanceMeters.number(),
+                    infection_75th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf70thPercentileMeanDistanceMeters.number(),
+                    infection_70th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf65thPercentileMeanDistanceMeters.number(),
+                    infection_65th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf60thPercentileMeanDistanceMeters.number(),
+                    infection_60th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf55thPercentileMeanDistanceMeters.number(),
+                    infection_55th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf50thPercentileMeanDistanceMeters.number(),
+                    infection_50th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf45thPercentileMeanDistanceMeters.number(),
+                    infection_45th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf40thPercentileMeanDistanceMeters.number(),
+                    infection_40th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf35thPercentileMeanDistanceMeters.number(),
+                    infection_35th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf30thPercentileMeanDistanceMeters.number(),
+                    infection_30th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf25thPercentileMeanDistanceMeters.number(),
+                    infection_25th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf20thPercentileMeanDistanceMeters.number(),
+                    infection_20th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf15thPercentileMeanDistanceMeters.number(),
+                    infection_15th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf10thPercentileMeanDistanceMeters.number(),
+                    infection_10th_percentile_mean_distance_from_source,
+                )?;
+                workbook.write_number(
+                    Column::Inf99thPercentileSpreadMetersPerYear.number(),
+                    infection_99th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf95thPercentileSpreadMetersPerYear.number(),
+                    infection_95th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf90thPercentileSpreadMetersPerYear.number(),
+                    infection_90th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf85thPercentileSpreadMetersPerYear.number(),
+                    infection_85th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf80thPercentileSpreadMetersPerYear.number(),
+                    infection_80th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf75thPercentileSpreadMetersPerYear.number(),
+                    infection_75th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf70thPercentileSpreadMetersPerYear.number(),
+                    infection_70th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf65thPercentileSpreadMetersPerYear.number(),
+                    infection_65th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf60thPercentileSpreadMetersPerYear.number(),
+                    infection_60th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf55thPercentileSpreadMetersPerYear.number(),
+                    infection_55th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf50thPercentileSpreadMetersPerYear.number(),
+                    infection_50th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf45thPercentileSpreadMetersPerYear.number(),
+                    infection_45th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf40thPercentileSpreadMetersPerYear.number(),
+                    infection_40th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf35thPercentileSpreadMetersPerYear.number(),
+                    infection_35th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf30thPercentileSpreadMetersPerYear.number(),
+                    infection_30th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf25thPercentileSpreadMetersPerYear.number(),
+                    infection_25th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf20thPercentileSpreadMetersPerYear.number(),
+                    infection_20th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf15thPercentileSpreadMetersPerYear.number(),
+                    infection_15th_percentile_spread_rate_mpy,
+                )?;
+                workbook.write_number(
+                    Column::Inf10thPercentileSpreadMetersPerYear.number(),
+                    infection_10th_percentile_spread_rate_mpy,
+                )?;
+                workbook
+                    .write_number(Column::TotalHealthyBiomass.number(), total_healthy_biomass)?;
+                workbook.write_number(
+                    Column::TotalInfectedBiomass.number(),
+                    total_infected_biomass,
+                )?;
+                workbook
+                    .write_number(Column::TotalIgnoredBiomass.number(), total_ignored_biomass)?;
+                workbook.write_number(Column::TotalBiomass.number(), total_biomass)?;
+                workbook.write_number(
+                    Column::ProportionInfectedBiomass.number(),
+                    proportion_infected_biomass,
+                )?;
+                workbook.write_number(
+                    Column::ProportionHostInfectedBiomass.number(),
+                    proportion_host_infected_biomass,
+                )?;
+                workbook.write_number(
+                    Column::TotalHealthyBiomassChange.number(),
+                    total_healthy_biomass_change,
+                )?;
+                workbook.write_number(
+                    Column::TotalInfectedBiomassChange.number(),
+                    total_infected_biomass_change,
+                )?;
+                workbook.write_number(
+                    Column::TotalIgnoredBiomassChange.number(),
+                    total_ignored_biomass_change,
+                )?;
+                workbook.write_number(Column::TotalBiomassChange.number(), total_biomass_change)?;
+                workbook.write_number(
+                    Column::TotalHealthyBiomassChangePercentage.number(),
+                    total_healthy_biomass_change_percent,
+                )?;
+                workbook.write_number(
+                    Column::TotalInfectedBiomassChangePercentage.number(),
+                    total_infected_biomass_change_percent,
+                )?;
+                workbook.write_number(
+                    Column::TotalIgnoredBiomassChangePercentage.number(),
+                    total_ignored_biomass_change_percent,
+                )?;
+                workbook.write_number(
+                    Column::TotalBiomassChangePercentage.number(),
+                    total_biomass_change_percent,
+                )?;
+                workbook.write_number(
+                    Column::TotalHealthyBiomassChangeMod.number(),
+                    total_healthy_biomass_change_modifier,
+                )?;
+                workbook.write_number(
+                    Column::TotalInfectedBiomassChangeMod.number(),
+                    total_infected_biomass_change_modifier,
+                )?;
+                workbook.write_number(
+                    Column::TotalIgnoredBiomassChangeMod.number(),
+                    total_ignored_biomass_change_modifier,
+                )?;
+                workbook.write_number(
+                    Column::TotalBiomassChangeMod.number(),
+                    total_biomass_change_modifier,
+                )?;
             }
 
             if let Some(mortality) = &state.mortality {
                 let total_annual_mortality = mortality.data.iter().sum::<u32>() as f64;
                 mortality_values.push(total_annual_mortality);
 
-                worksheet.write_number(row, 21, total_annual_mortality)?;
+                workbook.write_number(
+                    Column::TotalAnnualMortality.number(),
+                    total_annual_mortality,
+                )?;
             }
 
             if let Some(infection) = &state.infection {
@@ -832,8 +2523,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 img_time_count += 1;
             }
 
-            worksheet.write_number(row, 0, state.timestep as f64)?;
-            row += 1;
+            workbook.write_number(Column::Timestep.number(), state.timestep as f64)?;
+            ROW_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
         }
 
         if img_time_count > 0 {
@@ -871,109 +2562,36 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             .set_rule(ConditionalFormatCellRule::EqualTo(1.0))
             .set_format(&neutral_format);
 
-        //inf_new_change
-        worksheet.add_conditional_format(1, 4, row - 1, 4, &negative_condition)?;
-        worksheet.add_conditional_format(1, 4, row - 1, 4, &positive_condition)?;
-        worksheet.add_conditional_format(1, 4, row - 1, 4, &zero_condition)?;
-
-        //inf_new_change_percent
-        worksheet.add_conditional_format(1, 5, row - 1, 5, &negative_condition)?;
-        worksheet.add_conditional_format(1, 5, row - 1, 5, &positive_condition)?;
-        worksheet.add_conditional_format(1, 5, row - 1, 5, &zero_condition)?;
-
-        //total_biomass_change
-        worksheet.add_conditional_format(1, 31, row - 1, 31, &negative_condition)?;
-        worksheet.add_conditional_format(1, 31, row - 1, 31, &positive_condition)?;
-        worksheet.add_conditional_format(1, 31, row - 1, 31, &zero_condition)?;
-
-        //total_infected_biomass_change
-        worksheet.add_conditional_format(1, 29, row - 1, 29, &negative_condition)?;
-        worksheet.add_conditional_format(1, 29, row - 1, 29, &positive_condition)?;
-        worksheet.add_conditional_format(1, 29, row - 1, 29, &zero_condition)?;
-
-        //total_healthy_biomass_change
-        worksheet.add_conditional_format(1, 28, row - 1, 28, &negative_condition)?;
-        worksheet.add_conditional_format(1, 28, row - 1, 28, &positive_condition)?;
-        worksheet.add_conditional_format(1, 28, row - 1, 28, &zero_condition)?;
-
-        //total_ignored_biomass_change
-        worksheet.add_conditional_format(1, 30, row - 1, 30, &negative_condition)?;
-        worksheet.add_conditional_format(1, 30, row - 1, 30, &positive_condition)?;
-        worksheet.add_conditional_format(1, 30, row - 1, 30, &zero_condition)?;
-
-        //total_healthy_biomass_change_modifier
-        worksheet.add_conditional_format(1, 36, row - 1, 36, &modifier_less_than_one_condition)?;
-        worksheet.add_conditional_format(
-            1,
-            36,
-            row - 1,
-            36,
-            &modifier_greater_than_one_condition,
-        )?;
-        worksheet.add_conditional_format(1, 36, row - 1, 36, &modifier_equal_one_condition)?;
-
-        //total_infected_biomass_change_modifier
-        worksheet.add_conditional_format(1, 37, row - 1, 37, &modifier_less_than_one_condition)?;
-        worksheet.add_conditional_format(
-            1,
-            37,
-            row - 1,
-            37,
-            &modifier_greater_than_one_condition,
-        )?;
-        worksheet.add_conditional_format(1, 37, row - 1, 37, &modifier_equal_one_condition)?;
-
-        //total_ignored_biomass_change_modifier
-        worksheet.add_conditional_format(1, 38, row - 1, 38, &modifier_less_than_one_condition)?;
-        worksheet.add_conditional_format(
-            1,
-            38,
-            row - 1,
-            38,
-            &modifier_greater_than_one_condition,
-        )?;
-        worksheet.add_conditional_format(1, 38, row - 1, 38, &modifier_equal_one_condition)?;
-
-        //total_biomass_change_modifier
-        worksheet.add_conditional_format(1, 39, row - 1, 39, &modifier_less_than_one_condition)?;
-        worksheet.add_conditional_format(
-            1,
-            39,
-            row - 1,
-            39,
-            &modifier_greater_than_one_condition,
-        )?;
-        worksheet.add_conditional_format(1, 39, row - 1, 39, &modifier_equal_one_condition)?;
-
-        //t_hea_biomass_change_percent
-        worksheet.add_conditional_format(1, 32, row - 1, 32, &negative_condition)?;
-        worksheet.add_conditional_format(1, 32, row - 1, 32, &positive_condition)?;
-        worksheet.add_conditional_format(1, 32, row - 1, 32, &zero_condition)?;
-
-        //t_inf_biomass_change_percent
-        worksheet.add_conditional_format(1, 33, row - 1, 33, &negative_condition)?;
-        worksheet.add_conditional_format(1, 33, row - 1, 33, &positive_condition)?;
-        worksheet.add_conditional_format(1, 33, row - 1, 33, &zero_condition)?;
-
-        //t_ign_biomass_change_percent
-        worksheet.add_conditional_format(1, 34, row - 1, 34, &negative_condition)?;
-        worksheet.add_conditional_format(1, 34, row - 1, 34, &positive_condition)?;
-        worksheet.add_conditional_format(1, 34, row - 1, 34, &zero_condition)?;
-
-        //t_biomass_change_percent
-        worksheet.add_conditional_format(1, 35, row - 1, 35, &negative_condition)?;
-        worksheet.add_conditional_format(1, 35, row - 1, 35, &positive_condition)?;
-        worksheet.add_conditional_format(1, 35, row - 1, 35, &zero_condition)?;
-
-        //inf_area_change
-        worksheet.add_conditional_format(1, 8, row - 1, 8, &negative_condition)?;
-        worksheet.add_conditional_format(1, 8, row - 1, 8, &positive_condition)?;
-        worksheet.add_conditional_format(1, 8, row - 1, 8, &zero_condition)?;
-
-        //inf_area_change_m2_percent
-        worksheet.add_conditional_format(1, 9, row - 1, 9, &negative_condition)?;
-        worksheet.add_conditional_format(1, 9, row - 1, 9, &positive_condition)?;
-        worksheet.add_conditional_format(1, 9, row - 1, 9, &zero_condition)?;
+        for column in Column::iter() {
+            if let Some(formatter) = column.conditional_formatter() {
+                match formatter {
+                    ConditionalFormatter::ChangeAbsolute => {
+                        workbook.add_conditional_format(column.number(), &negative_condition)?;
+                        workbook.add_conditional_format(column.number(), &positive_condition)?;
+                        workbook.add_conditional_format(column.number(), &zero_condition)?;
+                    }
+                    ConditionalFormatter::ChangePercentage => {
+                        workbook.add_conditional_format(column.number(), &negative_condition)?;
+                        workbook.add_conditional_format(column.number(), &positive_condition)?;
+                        workbook.add_conditional_format(column.number(), &zero_condition)?;
+                    }
+                    ConditionalFormatter::ChangeModifier => {
+                        workbook.add_conditional_format(
+                            column.number(),
+                            &modifier_less_than_one_condition,
+                        )?;
+                        workbook.add_conditional_format(
+                            column.number(),
+                            &modifier_greater_than_one_condition,
+                        )?;
+                        workbook.add_conditional_format(
+                            column.number(),
+                            &modifier_equal_one_condition,
+                        )?;
+                    }
+                }
+            }
+        }
 
         // Conditional formatting for total_annual_mortality column
         if !mortality_values.is_empty() {
@@ -1000,14 +2618,22 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             let mortality_median_condition = ConditionalFormatCell::new()
                 .set_rule(ConditionalFormatCellRule::EqualTo(median_mortality))
                 .set_format(&mortality_median_format);
-
-            worksheet.add_conditional_format(1, 21, row - 1, 21, &mortality_min_condition)?;
-            worksheet.add_conditional_format(1, 21, row - 1, 21, &mortality_max_condition)?;
-            worksheet.add_conditional_format(1, 21, row - 1, 21, &mortality_median_condition)?;
+            workbook.add_conditional_format(
+                Column::TotalAnnualMortality.number(),
+                &mortality_min_condition,
+            )?;
+            workbook.add_conditional_format(
+                Column::TotalAnnualMortality.number(),
+                &mortality_max_condition,
+            )?;
+            workbook.add_conditional_format(
+                Column::TotalAnnualMortality.number(),
+                &mortality_median_condition,
+            )?;
         }
 
         let xlsx_path = args.output_dir.join("output.xlsx");
-        workbook.save(&xlsx_path)?;
+        workbook.save(&xlsx_path.to_string_lossy())?;
     }
 
     Ok(())
