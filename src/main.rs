@@ -1,5 +1,4 @@
 use clap::Parser;
-use rust_xlsxwriter::conditional_format::ConditionalFormat;
 use rust_xlsxwriter::worksheet::Worksheet;
 use rust_xlsxwriter::{
     Color, ConditionalFormatCell, ConditionalFormatCellRule, Format, Note, XlsxError,
@@ -960,7 +959,7 @@ where
     let mut n = 0usize;
 
     for value in iter {
-        let x = ROW_COUNTER.load(AtomicOrdering::SeqCst) as f64; // works for &f64 and f64
+        let x = *value.borrow(); // works for &f64 and f64
         let y = x - compensation;
         let t = sum + y;
         compensation = (t - sum) - y;
