@@ -891,9 +891,14 @@ struct InfectionStateMap {
     pub healthy_sites: Box<[(u32, u32)]>,
     pub infected_sites: Box<[(u32, u32)]>,
     pub ignored_sites: Box<[(u32, u32)]>,
-    pub healthy_biomass: Box<[u64]>,
-    pub infected_biomass: Box<[u64]>,
-    pub ignored_biomass: Box<[u64]>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct BiomassMap {
+    pub timestep: u32,
+    pub width: u32,
+    pub height: u32,
+    pub biomass: Box<[(u64, u64, u64)]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -908,6 +913,7 @@ struct MortalityMap {
 struct MapGrouping {
     foi: Option<F64Map>,
     infection: Option<InfectionStateMap>,
+    biomass: Option<BiomassMap>,
     mortality: Option<MortalityMap>,
 }
 
@@ -919,9 +925,10 @@ struct Infection {
     healthy_sites: Box<[(u32, u32)]>,
     infected_sites: Box<[(u32, u32)]>,
     ignored_sites: Box<[(u32, u32)]>,
-    healthy_biomass: Box<[u64]>,
-    infected_biomass: Box<[u64]>,
-    ignored_biomass: Box<[u64]>,
+}
+
+struct Biomass {
+    data: Box<[(u64, u64, u64)]>,
 }
 
 struct Mortality {
@@ -934,6 +941,7 @@ struct CombinedState {
     height: u32,
     foi: Option<Foi>,
     infection: Option<Infection>,
+    biomass: Option<Biomass>,
     mortality: Option<Mortality>,
 }
 
@@ -986,12 +994,16 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     }
     let foi_dir = args.dir.join("foi");
     let infection_dir = args.dir.join("infection");
+    let biomass_dir = args.dir.join("biomass");
     let mortality_dir = args.dir.join("mortality");
     if !foi_dir.is_dir() {
         return Err(format!("Missing subdirectory: {}", foi_dir.display()).into());
     }
     if !infection_dir.is_dir() {
         return Err(format!("Missing subdirectory: {}", infection_dir.display()).into());
+    }
+    if !biomass_dir.is_dir() {
+        return Err(format!("Missing subdirectory: {}", biomass_dir.display()).into());
     }
 
     let mut foi_files: Vec<PathBuf> = WalkDir::new(&foi_dir)
@@ -1023,6 +1035,21 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         })
         .collect();
     infection_files.sort_by(|a, b| compare_paths_natural(a, b));
+
+    let mut biomass_files: Vec<PathBuf> = WalkDir::new(&biomass_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+        .filter(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.chars().all(|c| c.is_ascii_digit()))
+                .unwrap_or(false)
+        })
+        .collect();
+    biomass_files.sort_by(|a, b| compare_paths_natural(a, b));
 
     let mut mortality_files: Vec<PathBuf> = WalkDir::new(&mortality_dir)
         .into_iter()
@@ -1065,6 +1092,18 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    for path in biomass_files {
+        let bytes = fs::read(&path)?;
+        match bincode::deserialize::<BiomassMap>(&bytes) {
+            Ok(map) => {
+                let entry = by_timestep.entry(map.timestep).or_default();
+                entry.biomass = Some(map);
+            }
+            Err(err) => {
+                eprintln!("ERR {} {}", path.display(), err);
+            }
+        }
+    }
     for path in mortality_files {
         let bytes = fs::read(&path)?;
         match bincode::deserialize::<MortalityMap>(&bytes) {
@@ -1086,6 +1125,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             height: 0,
             foi: None,
             infection: None,
+            biomass: None,
             mortality: None,
         };
 
@@ -1120,39 +1160,54 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 combined_state.width = infection.width;
                 combined_state.height = infection.height;
             }
-            if infection.healthy_biomass.len()
-                != combined_state.width as usize * combined_state.height as usize
+            let InfectionStateMap {
+                healthy_sites,
+                infected_sites,
+                ignored_sites,
+                ..
+            } = infection;
+
+            combined_state.infection = Some(Infection {
+                healthy_sites,
+                infected_sites,
+                ignored_sites,
+            });
+        }
+
+        if let Some(biomass) = group.biomass {
+            if biomass.timestep != timestep {
+                return Err(format!("Mismatched timestep for biomass at ts {}", timestep).into());
+            }
+            if combined_state.width != 0
+                && (combined_state.width != biomass.width
+                    || combined_state.height != biomass.height)
             {
                 return Err(format!(
-                    "Mismatched healthy_biomass length at ts {}: {}",
+                    "Mismatched dimensions at ts {}: existing {}x{} vs biomass {}x{}",
                     timestep,
-                    infection.healthy_biomass.len()
+                    combined_state.width,
+                    combined_state.height,
+                    biomass.width,
+                    biomass.height
                 )
                 .into());
             }
-            if infection.infected_biomass.len() != infection.healthy_biomass.len() {
+            if combined_state.width == 0 {
+                combined_state.width = biomass.width;
+                combined_state.height = biomass.height;
+            }
+            let expected_len = combined_state.width as usize * combined_state.height as usize;
+            if biomass.biomass.len() != expected_len {
                 return Err(format!(
-                    "Mismatched infected_biomass length at ts {}: {}",
+                    "Mismatched biomass length at ts {}: {} (expected {})",
                     timestep,
-                    infection.infected_biomass.len()
+                    biomass.biomass.len(),
+                    expected_len
                 )
                 .into());
             }
-            if infection.ignored_biomass.len() != infection.healthy_biomass.len() {
-                return Err(format!(
-                    "Mismatched ignored_biomass length at ts {}: {}",
-                    timestep,
-                    infection.ignored_biomass.len()
-                )
-                .into());
-            }
-            combined_state.infection = Some(Infection {
-                healthy_sites: infection.healthy_sites,
-                infected_sites: infection.infected_sites,
-                ignored_sites: infection.ignored_sites,
-                healthy_biomass: infection.healthy_biomass,
-                infected_biomass: infection.infected_biomass,
-                ignored_biomass: infection.ignored_biomass,
+            combined_state.biomass = Some(Biomass {
+                data: biomass.biomass,
             });
         }
 
@@ -2057,16 +2112,6 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 previous_infection_10th_percentile_mean_distance_from_source =
                     infection_10th_percentile_mean_distance_from_source;
 
-                let total_healthy_biomass = infection.healthy_biomass.iter().sum::<u64>() as f64;
-                let total_infected_biomass = infection.infected_biomass.iter().sum::<u64>() as f64;
-                let total_ignored_biomass = infection.ignored_biomass.iter().sum::<u64>() as f64;
-                let total_biomass =
-                    total_healthy_biomass + total_infected_biomass + total_ignored_biomass;
-
-                let proportion_infected_biomass = total_infected_biomass / total_biomass;
-                let proportion_host_infected_biomass =
-                    total_infected_biomass / (total_healthy_biomass + total_infected_biomass);
-
                 let (
                     newly_infected_sites_change_modifier,
                     newly_infected_sites_change,
@@ -2099,74 +2144,173 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     (1.0, 0.0, 0.0)
                 };
 
-                let (
-                    total_healthy_biomass_change_modifier,
-                    total_healthy_biomass_change,
-                    total_healthy_biomass_change_percent,
-                ) = if previous_total_healthy_biomass > 0.0 {
-                    (
-                        total_healthy_biomass / previous_total_healthy_biomass,
-                        total_healthy_biomass - previous_total_healthy_biomass,
-                        ((total_healthy_biomass as f64 - previous_total_healthy_biomass as f64)
-                            / previous_total_healthy_biomass as f64)
-                            * 100.0,
-                    )
-                } else {
-                    (1.0, 0.0, 0.0)
-                };
-                let (
-                    total_infected_biomass_change_modifier,
-                    total_infected_biomass_change,
-                    total_infected_biomass_change_percent,
-                ) = if previous_total_infected_biomass > 0.0 {
-                    (
-                        total_infected_biomass / previous_total_infected_biomass,
-                        total_infected_biomass - previous_total_infected_biomass,
-                        ((total_infected_biomass as f64 - previous_total_infected_biomass as f64)
-                            / previous_total_infected_biomass as f64)
-                            * 100.0,
-                    )
-                } else {
-                    (1.0, 0.0, 0.0)
-                };
-                let (
-                    total_ignored_biomass_change_modifier,
-                    total_ignored_biomass_change,
-                    total_ignored_biomass_change_percent,
-                ) = if previous_total_ignored_biomass > 0.0 {
-                    (
-                        total_ignored_biomass / previous_total_ignored_biomass,
-                        total_ignored_biomass - previous_total_ignored_biomass,
-                        ((total_ignored_biomass as f64 - previous_total_ignored_biomass as f64)
-                            / previous_total_ignored_biomass as f64)
-                            * 100.0,
-                    )
-                } else {
-                    (1.0, 0.0, 0.0)
-                };
-                let (
-                    total_biomass_change_modifier,
-                    total_biomass_change,
-                    total_biomass_change_percent,
-                ) = if previous_total_biomass > 0.0 {
-                    (
-                        total_biomass / previous_total_biomass,
-                        total_biomass - previous_total_biomass,
-                        ((total_biomass as f64 - previous_total_biomass as f64)
-                            / previous_total_biomass as f64)
-                            * 100.0,
-                    )
-                } else {
-                    (1.0, 0.0, 0.0)
-                };
+                if let Some(biomass) = &state.biomass {
+                    let (total_healthy_biomass, total_infected_biomass, total_ignored_biomass) =
+                        biomass.data.iter().fold(
+                            (0u64, 0u64, 0u64),
+                            |(sum_healthy, sum_infected, sum_ignored),
+                             &(healthy, infected, ignored)| {
+                                (
+                                    sum_healthy.saturating_add(healthy),
+                                    sum_infected.saturating_add(infected),
+                                    sum_ignored.saturating_add(ignored),
+                                )
+                            },
+                        );
+                    let (total_healthy_biomass, total_infected_biomass, total_ignored_biomass) = (
+                        total_healthy_biomass as f64,
+                        total_infected_biomass as f64,
+                        total_ignored_biomass as f64,
+                    );
+
+                    let total_biomass =
+                        total_healthy_biomass + total_infected_biomass + total_ignored_biomass;
+
+                    let proportion_infected_biomass = total_infected_biomass / total_biomass;
+                    let proportion_host_infected_biomass =
+                        total_infected_biomass / (total_healthy_biomass + total_infected_biomass);
+
+                    let (
+                        total_healthy_biomass_change_modifier,
+                        total_healthy_biomass_change,
+                        total_healthy_biomass_change_percent,
+                    ) = if previous_total_healthy_biomass > 0.0 {
+                        (
+                            total_healthy_biomass / previous_total_healthy_biomass,
+                            total_healthy_biomass - previous_total_healthy_biomass,
+                            ((total_healthy_biomass as f64
+                                - previous_total_healthy_biomass as f64)
+                                / previous_total_healthy_biomass as f64)
+                                * 100.0,
+                        )
+                    } else {
+                        (1.0, 0.0, 0.0)
+                    };
+                    let (
+                        total_infected_biomass_change_modifier,
+                        total_infected_biomass_change,
+                        total_infected_biomass_change_percent,
+                    ) = if previous_total_infected_biomass > 0.0 {
+                        (
+                            total_infected_biomass / previous_total_infected_biomass,
+                            total_infected_biomass - previous_total_infected_biomass,
+                            ((total_infected_biomass as f64
+                                - previous_total_infected_biomass as f64)
+                                / previous_total_infected_biomass as f64)
+                                * 100.0,
+                        )
+                    } else {
+                        (1.0, 0.0, 0.0)
+                    };
+                    let (
+                        total_ignored_biomass_change_modifier,
+                        total_ignored_biomass_change,
+                        total_ignored_biomass_change_percent,
+                    ) = if previous_total_ignored_biomass > 0.0 {
+                        (
+                            total_ignored_biomass / previous_total_ignored_biomass,
+                            total_ignored_biomass - previous_total_ignored_biomass,
+                            ((total_ignored_biomass as f64
+                                - previous_total_ignored_biomass as f64)
+                                / previous_total_ignored_biomass as f64)
+                                * 100.0,
+                        )
+                    } else {
+                        (1.0, 0.0, 0.0)
+                    };
+                    let (
+                        total_biomass_change_modifier,
+                        total_biomass_change,
+                        total_biomass_change_percent,
+                    ) = if previous_total_biomass > 0.0 {
+                        (
+                            total_biomass / previous_total_biomass,
+                            total_biomass - previous_total_biomass,
+                            ((total_biomass as f64 - previous_total_biomass as f64)
+                                / previous_total_biomass as f64)
+                                * 100.0,
+                        )
+                    } else {
+                        (1.0, 0.0, 0.0)
+                    };
+
+                    previous_total_healthy_biomass = total_healthy_biomass;
+                    previous_total_infected_biomass = total_infected_biomass;
+                    previous_total_ignored_biomass = total_ignored_biomass;
+                    previous_total_biomass = total_biomass;
+
+                    workbook.write_number(
+                        Column::TotalHealthyBiomass.number(),
+                        total_healthy_biomass,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalInfectedBiomass.number(),
+                        total_infected_biomass,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalIgnoredBiomass.number(),
+                        total_ignored_biomass,
+                    )?;
+                    workbook.write_number(Column::TotalBiomass.number(), total_biomass)?;
+                    workbook.write_number(
+                        Column::ProportionInfectedBiomass.number(),
+                        proportion_infected_biomass,
+                    )?;
+                    workbook.write_number(
+                        Column::ProportionHostInfectedBiomass.number(),
+                        proportion_host_infected_biomass,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalHealthyBiomassChange.number(),
+                        total_healthy_biomass_change,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalInfectedBiomassChange.number(),
+                        total_infected_biomass_change,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalIgnoredBiomassChange.number(),
+                        total_ignored_biomass_change,
+                    )?;
+                    workbook
+                        .write_number(Column::TotalBiomassChange.number(), total_biomass_change)?;
+                    workbook.write_number(
+                        Column::TotalHealthyBiomassChangePercentage.number(),
+                        total_healthy_biomass_change_percent,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalInfectedBiomassChangePercentage.number(),
+                        total_infected_biomass_change_percent,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalIgnoredBiomassChangePercentage.number(),
+                        total_ignored_biomass_change_percent,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalBiomassChangePercentage.number(),
+                        total_biomass_change_percent,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalHealthyBiomassChangeMod.number(),
+                        total_healthy_biomass_change_modifier,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalInfectedBiomassChangeMod.number(),
+                        total_infected_biomass_change_modifier,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalIgnoredBiomassChangeMod.number(),
+                        total_ignored_biomass_change_modifier,
+                    )?;
+                    workbook.write_number(
+                        Column::TotalBiomassChangeMod.number(),
+                        total_biomass_change_modifier,
+                    )?;
+                }
 
                 previous_number_of_infected_sites = infection.infected_sites.len();
                 previous_infected_area = infected_area;
                 previous_newly_infected_sites = newly_infected_sites;
-                previous_total_healthy_biomass = total_healthy_biomass;
-                previous_total_infected_biomass = total_infected_biomass;
-                previous_total_ignored_biomass = total_ignored_biomass;
-                previous_total_biomass = total_biomass;
 
                 workbook.write_number(
                     Column::InfTotal.number(),
@@ -2429,68 +2573,6 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 workbook.write_number(
                     Column::Inf10thPercentileSpreadMetersPerYear.number(),
                     infection_10th_percentile_spread_rate_mpy,
-                )?;
-                workbook
-                    .write_number(Column::TotalHealthyBiomass.number(), total_healthy_biomass)?;
-                workbook.write_number(
-                    Column::TotalInfectedBiomass.number(),
-                    total_infected_biomass,
-                )?;
-                workbook
-                    .write_number(Column::TotalIgnoredBiomass.number(), total_ignored_biomass)?;
-                workbook.write_number(Column::TotalBiomass.number(), total_biomass)?;
-                workbook.write_number(
-                    Column::ProportionInfectedBiomass.number(),
-                    proportion_infected_biomass,
-                )?;
-                workbook.write_number(
-                    Column::ProportionHostInfectedBiomass.number(),
-                    proportion_host_infected_biomass,
-                )?;
-                workbook.write_number(
-                    Column::TotalHealthyBiomassChange.number(),
-                    total_healthy_biomass_change,
-                )?;
-                workbook.write_number(
-                    Column::TotalInfectedBiomassChange.number(),
-                    total_infected_biomass_change,
-                )?;
-                workbook.write_number(
-                    Column::TotalIgnoredBiomassChange.number(),
-                    total_ignored_biomass_change,
-                )?;
-                workbook.write_number(Column::TotalBiomassChange.number(), total_biomass_change)?;
-                workbook.write_number(
-                    Column::TotalHealthyBiomassChangePercentage.number(),
-                    total_healthy_biomass_change_percent,
-                )?;
-                workbook.write_number(
-                    Column::TotalInfectedBiomassChangePercentage.number(),
-                    total_infected_biomass_change_percent,
-                )?;
-                workbook.write_number(
-                    Column::TotalIgnoredBiomassChangePercentage.number(),
-                    total_ignored_biomass_change_percent,
-                )?;
-                workbook.write_number(
-                    Column::TotalBiomassChangePercentage.number(),
-                    total_biomass_change_percent,
-                )?;
-                workbook.write_number(
-                    Column::TotalHealthyBiomassChangeMod.number(),
-                    total_healthy_biomass_change_modifier,
-                )?;
-                workbook.write_number(
-                    Column::TotalInfectedBiomassChangeMod.number(),
-                    total_infected_biomass_change_modifier,
-                )?;
-                workbook.write_number(
-                    Column::TotalIgnoredBiomassChangeMod.number(),
-                    total_ignored_biomass_change_modifier,
-                )?;
-                workbook.write_number(
-                    Column::TotalBiomassChangeMod.number(),
-                    total_biomass_change_modifier,
                 )?;
             }
 
