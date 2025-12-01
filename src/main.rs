@@ -1011,6 +1011,7 @@ struct MapGrouping {
     mortality: Option<MortalityMap>,
     mortality_occurred: Option<StateMap>,
     infection_occurred: Option<StateMap>,
+    regeneration_occurred: Option<StateMap>,
 }
 
 struct Foi {
@@ -1043,6 +1044,7 @@ struct CombinedState {
     mortality: Option<Mortality>,
     mortality_occurred: Option<StateFlags>,
     infection_occurred: Option<StateFlags>,
+    regeneration_occurred: Option<StateFlags>,
 }
 
 pub fn euclidean_distance(a: &(usize, usize), b: &(usize, usize)) -> f64 {
@@ -1103,6 +1105,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let mortality_dir = args.dir.join("mortality");
     let mortality_occurred_dir = args.dir.join("mortality_occurred");
     let infection_occurred_dir = args.dir.join("infection_occurred");
+    let regeneration_occurred_dir = args.dir.join("regeneration_occurred");
 
     let mut foi_files: Vec<PathBuf> = if foi_dir.is_dir() {
         WalkDir::new(&foi_dir)
@@ -1218,6 +1221,25 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     };
     infection_occurred_files.sort_by(|a, b| compare_paths_natural(a, b));
 
+    let mut regeneration_occurred_files: Vec<PathBuf> = if regeneration_occurred_dir.is_dir() {
+        WalkDir::new(&regeneration_occurred_dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path().to_path_buf())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| {
+                p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.chars().all(|c| c.is_ascii_digit()))
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    regeneration_occurred_files.sort_by(|a, b| compare_paths_natural(a, b));
+
     let mut by_timestep: HashMap<u32, MapGrouping> = HashMap::new();
     for path in foi_files {
         let bytes = fs::read(&path)?;
@@ -1295,6 +1317,19 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    for path in regeneration_occurred_files {
+        let bytes = fs::read(&path)?;
+        match bincode::deserialize::<StateMap>(&bytes) {
+            Ok(map) => {
+                let timestep = map.timestep;
+                let entry = by_timestep.entry(timestep).or_default();
+                entry.regeneration_occurred = Some(map);
+            }
+            Err(err) => {
+                eprintln!("ERR {} {}", path.display(), err);
+            }
+        }
+    }
     let mut combined: BTreeMap<u32, CombinedState> = BTreeMap::new();
     for (timestep, group) in by_timestep.into_iter() {
         let mut combined_state = CombinedState {
@@ -1305,6 +1340,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             mortality: None,
             mortality_occurred: None,
             infection_occurred: None,
+            regeneration_occurred: None,
         };
 
         let mut some_data_seen = false;
@@ -1452,6 +1488,37 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             }
             combined_state.infection_occurred = Some(StateFlags {
                 data: infection_occurred.data,
+            });
+            some_data_seen = true;
+        }
+
+        if let Some(regeneration_occurred) = group.regeneration_occurred {
+            if regeneration_occurred.timestep != timestep {
+                return Err(format!(
+                    "Mismatched timestep for regeneration_occurred at ts {}",
+                    timestep
+                )
+                .into());
+            }
+            if regeneration_occurred.width != width || regeneration_occurred.height != height {
+                return Err(format!(
+                    "Unexpected dimensions for regeneration_occurred at ts {}: {}x{} (expected {}x{})",
+                    timestep, regeneration_occurred.width, regeneration_occurred.height, width, height
+                )
+                .into());
+            }
+            let expected_len = width as usize * height as usize;
+            if regeneration_occurred.data.len() != expected_len {
+                return Err(format!(
+                    "Mismatched regeneration_occurred length at ts {}: {} (expected {})",
+                    timestep,
+                    regeneration_occurred.data.len(),
+                    expected_len
+                )
+                .into());
+            }
+            combined_state.regeneration_occurred = Some(StateFlags {
+                data: regeneration_occurred.data,
             });
             some_data_seen = true;
         }
@@ -3044,6 +3111,20 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     height,
                     infection_occurred.data.as_ref(),
                     [255, 0, 0, 255],
+                    [0, 0, 0, 255],
+                    &image_cfg,
+                )?;
+            }
+
+            if let Some(regeneration_occurred) = &state.regeneration_occurred {
+                render_state_map_png(
+                    &args.output_dir,
+                    "regeneration_occurred",
+                    state.timestep,
+                    width,
+                    height,
+                    regeneration_occurred.data.as_ref(),
+                    [0, 255, 0, 255],
                     [0, 0, 0, 255],
                     &image_cfg,
                 )?;
