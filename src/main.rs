@@ -136,6 +136,7 @@ enum Column {
     Inf20thPercentileSpreadMetersPerYear,
     Inf15thPercentileSpreadMetersPerYear,
     Inf10thPercentileSpreadMetersPerYear,
+    FOIMean,
     FOI99thPercentile,
     FOI95thPercentile,
     FOI90thPercentile,
@@ -304,98 +305,99 @@ impl Column {
             Column::Inf20thPercentileSpreadMetersPerYear => 65,
             Column::Inf15thPercentileSpreadMetersPerYear => 66,
             Column::Inf10thPercentileSpreadMetersPerYear => 67,
-            Column::FOI99thPercentile => 68,
-            Column::FOI95thPercentile => 69,
-            Column::FOI90thPercentile => 70,
-            Column::FOI85thPercentile => 71,
-            Column::FOI80thPercentile => 72,
-            Column::FOI75thPercentile => 73,
-            Column::FOI70thPercentile => 74,
-            Column::FOI65thPercentile => 75,
-            Column::FOI60thPercentile => 76,
-            Column::FOI55thPercentile => 77,
-            Column::FOI50thPercentile => 78,
-            Column::FOI45thPercentile => 79,
-            Column::FOI40thPercentile => 80,
-            Column::FOI35thPercentile => 81,
-            Column::FOI30thPercentile => 82,
-            Column::FOI25thPercentile => 83,
-            Column::FOI20thPercentile => 84,
-            Column::FOI15thPercentile => 85,
-            Column::FOI10thPercentile => 86,
-            Column::FOI99thPercentileMean => 87,
-            Column::FOI95thPercentileMean => 88,
-            Column::FOI90thPercentileMean => 89,
-            Column::FOI85thPercentileMean => 90,
-            Column::FOI80thPercentileMean => 91,
-            Column::FOI75thPercentileMean => 92,
-            Column::FOI70thPercentileMean => 93,
-            Column::FOI65thPercentileMean => 94,
-            Column::FOI60thPercentileMean => 95,
-            Column::FOI55thPercentileMean => 96,
-            Column::FOI50thPercentileMean => 97,
-            Column::FOI45thPercentileMean => 98,
-            Column::FOI40thPercentileMean => 99,
-            Column::FOI35thPercentileMean => 100,
-            Column::FOI30thPercentileMean => 101,
-            Column::FOI25thPercentileMean => 102,
-            Column::FOI20thPercentileMean => 103,
-            Column::FOI15thPercentileMean => 104,
-            Column::FOI10thPercentileMean => 105,
-            Column::FOI99thPercentileMeanDistanceMeters => 106,
-            Column::FOI95thPercentileMeanDistanceMeters => 107,
-            Column::FOI90thPercentileMeanDistanceMeters => 108,
-            Column::FOI85thPercentileMeanDistanceMeters => 109,
-            Column::FOI80thPercentileMeanDistanceMeters => 110,
-            Column::FOI75thPercentileMeanDistanceMeters => 111,
-            Column::FOI70thPercentileMeanDistanceMeters => 112,
-            Column::FOI65thPercentileMeanDistanceMeters => 113,
-            Column::FOI60thPercentileMeanDistanceMeters => 114,
-            Column::FOI55thPercentileMeanDistanceMeters => 115,
-            Column::FOI50thPercentileMeanDistanceMeters => 116,
-            Column::FOI45thPercentileMeanDistanceMeters => 117,
-            Column::FOI40thPercentileMeanDistanceMeters => 118,
-            Column::FOI35thPercentileMeanDistanceMeters => 119,
-            Column::FOI30thPercentileMeanDistanceMeters => 120,
-            Column::FOI25thPercentileMeanDistanceMeters => 121,
-            Column::FOI20thPercentileMeanDistanceMeters => 122,
-            Column::FOI15thPercentileMeanDistanceMeters => 123,
-            Column::FOI10thPercentileMeanDistanceMeters => 124,
-            Column::FOI99thPercentileSpreadMetersPerYear => 125,
-            Column::FOI95thPercentileSpreadMetersPerYear => 126,
-            Column::FOI90thPercentileSpreadMetersPerYear => 127,
-            Column::FOI85thPercentileSpreadMetersPerYear => 128,
-            Column::FOI80thPercentileSpreadMetersPerYear => 129,
-            Column::FOI75thPercentileSpreadMetersPerYear => 130,
-            Column::FOI70thPercentileSpreadMetersPerYear => 131,
-            Column::FOI65thPercentileSpreadMetersPerYear => 132,
-            Column::FOI60thPercentileSpreadMetersPerYear => 133,
-            Column::FOI55thPercentileSpreadMetersPerYear => 134,
-            Column::FOI50thPercentileSpreadMetersPerYear => 135,
-            Column::FOI45thPercentileSpreadMetersPerYear => 136,
-            Column::FOI40thPercentileSpreadMetersPerYear => 137,
-            Column::FOI35thPercentileSpreadMetersPerYear => 138,
-            Column::FOI30thPercentileSpreadMetersPerYear => 139,
-            Column::FOI25thPercentileSpreadMetersPerYear => 140,
-            Column::FOI20thPercentileSpreadMetersPerYear => 141,
-            Column::FOI15thPercentileSpreadMetersPerYear => 142,
-            Column::FOI10thPercentileSpreadMetersPerYear => 143,
-            Column::TotalAnnualMortality => 144,
-            Column::TotalHealthyBiomass => 145,
-            Column::TotalInfectedBiomass => 146,
-            Column::TotalIgnoredBiomass => 147,
-            Column::TotalBiomass => 148,
-            Column::ProportionInfectedBiomass => 149,
-            Column::ProportionHostInfectedBiomass => 150,
-            Column::TotalHealthyBiomassChange => 151,
-            Column::TotalInfectedBiomassChange => 152,
-            Column::TotalIgnoredBiomassChange => 153,
-            Column::TotalBiomassChange => 154,
-            Column::TotalHealthyBiomassChangePercentage => 155,
-            Column::TotalInfectedBiomassChangePercentage => 156,
-            Column::TotalIgnoredBiomassChangePercentage => 157,
-            Column::TotalBiomassChangePercentage => 158,
-            Column::TotalHealthyBiomassChangeMod => 159,
+            Column::FOIMean => 68,
+            Column::FOI99thPercentile => 69,
+            Column::FOI95thPercentile => 70,
+            Column::FOI90thPercentile => 71,
+            Column::FOI85thPercentile => 72,
+            Column::FOI80thPercentile => 73,
+            Column::FOI75thPercentile => 74,
+            Column::FOI70thPercentile => 75,
+            Column::FOI65thPercentile => 76,
+            Column::FOI60thPercentile => 77,
+            Column::FOI55thPercentile => 78,
+            Column::FOI50thPercentile => 79,
+            Column::FOI45thPercentile => 80,
+            Column::FOI40thPercentile => 81,
+            Column::FOI35thPercentile => 82,
+            Column::FOI30thPercentile => 83,
+            Column::FOI25thPercentile => 84,
+            Column::FOI20thPercentile => 85,
+            Column::FOI15thPercentile => 86,
+            Column::FOI10thPercentile => 87,
+            Column::FOI99thPercentileMean => 88,
+            Column::FOI95thPercentileMean => 89,
+            Column::FOI90thPercentileMean => 90,
+            Column::FOI85thPercentileMean => 91,
+            Column::FOI80thPercentileMean => 92,
+            Column::FOI75thPercentileMean => 93,
+            Column::FOI70thPercentileMean => 94,
+            Column::FOI65thPercentileMean => 95,
+            Column::FOI60thPercentileMean => 96,
+            Column::FOI55thPercentileMean => 97,
+            Column::FOI50thPercentileMean => 98,
+            Column::FOI45thPercentileMean => 99,
+            Column::FOI40thPercentileMean => 100,
+            Column::FOI35thPercentileMean => 101,
+            Column::FOI30thPercentileMean => 102,
+            Column::FOI25thPercentileMean => 103,
+            Column::FOI20thPercentileMean => 104,
+            Column::FOI15thPercentileMean => 105,
+            Column::FOI10thPercentileMean => 106,
+            Column::FOI99thPercentileMeanDistanceMeters => 107,
+            Column::FOI95thPercentileMeanDistanceMeters => 108,
+            Column::FOI90thPercentileMeanDistanceMeters => 109,
+            Column::FOI85thPercentileMeanDistanceMeters => 110,
+            Column::FOI80thPercentileMeanDistanceMeters => 111,
+            Column::FOI75thPercentileMeanDistanceMeters => 112,
+            Column::FOI70thPercentileMeanDistanceMeters => 113,
+            Column::FOI65thPercentileMeanDistanceMeters => 114,
+            Column::FOI60thPercentileMeanDistanceMeters => 115,
+            Column::FOI55thPercentileMeanDistanceMeters => 116,
+            Column::FOI50thPercentileMeanDistanceMeters => 117,
+            Column::FOI45thPercentileMeanDistanceMeters => 118,
+            Column::FOI40thPercentileMeanDistanceMeters => 119,
+            Column::FOI35thPercentileMeanDistanceMeters => 120,
+            Column::FOI30thPercentileMeanDistanceMeters => 121,
+            Column::FOI25thPercentileMeanDistanceMeters => 122,
+            Column::FOI20thPercentileMeanDistanceMeters => 123,
+            Column::FOI15thPercentileMeanDistanceMeters => 124,
+            Column::FOI10thPercentileMeanDistanceMeters => 125,
+            Column::FOI99thPercentileSpreadMetersPerYear => 126,
+            Column::FOI95thPercentileSpreadMetersPerYear => 127,
+            Column::FOI90thPercentileSpreadMetersPerYear => 128,
+            Column::FOI85thPercentileSpreadMetersPerYear => 129,
+            Column::FOI80thPercentileSpreadMetersPerYear => 130,
+            Column::FOI75thPercentileSpreadMetersPerYear => 131,
+            Column::FOI70thPercentileSpreadMetersPerYear => 132,
+            Column::FOI65thPercentileSpreadMetersPerYear => 133,
+            Column::FOI60thPercentileSpreadMetersPerYear => 134,
+            Column::FOI55thPercentileSpreadMetersPerYear => 135,
+            Column::FOI50thPercentileSpreadMetersPerYear => 136,
+            Column::FOI45thPercentileSpreadMetersPerYear => 137,
+            Column::FOI40thPercentileSpreadMetersPerYear => 138,
+            Column::FOI35thPercentileSpreadMetersPerYear => 139,
+            Column::FOI30thPercentileSpreadMetersPerYear => 140,
+            Column::FOI25thPercentileSpreadMetersPerYear => 141,
+            Column::FOI20thPercentileSpreadMetersPerYear => 142,
+            Column::FOI15thPercentileSpreadMetersPerYear => 143,
+            Column::FOI10thPercentileSpreadMetersPerYear => 144,
+            Column::TotalAnnualMortality => 145,
+            Column::TotalHealthyBiomass => 146,
+            Column::TotalInfectedBiomass => 147,
+            Column::TotalIgnoredBiomass => 148,
+            Column::TotalBiomass => 149,
+            Column::ProportionInfectedBiomass => 150,
+            Column::ProportionHostInfectedBiomass => 151,
+            Column::TotalHealthyBiomassChange => 152,
+            Column::TotalInfectedBiomassChange => 153,
+            Column::TotalIgnoredBiomassChange => 154,
+            Column::TotalBiomassChange => 155,
+            Column::TotalHealthyBiomassChangePercentage => 156,
+            Column::TotalInfectedBiomassChangePercentage => 157,
+            Column::TotalIgnoredBiomassChangePercentage => 158,
+            Column::TotalBiomassChangePercentage => 159,
+            Column::TotalHealthyBiomassChangeMod => 160,
             Column::TotalInfectedBiomassChangeMod => 161,
             Column::TotalIgnoredBiomassChangeMod => 162,
             Column::TotalBiomassChangeMod => 163,
@@ -472,6 +474,7 @@ impl Column {
             Column::Inf20thPercentileSpreadMetersPerYear => "inf_20th_p_spread_mpy",
             Column::Inf15thPercentileSpreadMetersPerYear => "inf_15th_p_spread_mpy",
             Column::Inf10thPercentileSpreadMetersPerYear => "inf_10th_p_spread_mpy",
+            Column::FOIMean => "foi_mean",
             Column::FOI99thPercentile => "foi_99th_p",
             Column::FOI95thPercentile => "foi_95th_p",
             Column::FOI90thPercentile => "foi_90th_p",
@@ -617,6 +620,7 @@ impl Column {
             Column::Inf95thPercentileSpreadMetersPerYear => {
                 "infection spread rate in meters per year from 95th percentile"
             }
+            Column::FOIMean => "force of infection mean",
             Column::FOI99thPercentile => "force of infection 99th percentile",
             Column::FOI95thPercentile => "force of infection 95th percentile",
             Column::FOI90thPercentile => "force of infection 90th percentile",
@@ -924,7 +928,9 @@ impl Column {
 }
 
 mod image_grid;
-use crate::image_grid::{GridRenderConfig, render_foi_png_gray16, render_infection_state_png};
+use crate::image_grid::{
+    GridRenderConfig, render_foi_png_gray16, render_infection_state_png, render_state_map_png,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -989,12 +995,22 @@ struct MortalityMap {
     pub data: Box<[u32]>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct StateMap {
+    pub timestep: u32,
+    pub width: u32,
+    pub height: u32,
+    pub data: Box<[bool]>,
+}
+
 #[derive(Default)]
 struct MapGrouping {
     foi: Option<F64Map>,
     infection: Option<InfectionStateMap>,
     biomass: Option<BiomassMap>,
     mortality: Option<MortalityMap>,
+    mortality_occurred: Option<StateMap>,
+    infection_occurred: Option<StateMap>,
 }
 
 struct Foi {
@@ -1015,12 +1031,18 @@ struct Mortality {
     data: Box<[u32]>,
 }
 
+struct StateFlags {
+    data: Box<[bool]>,
+}
+
 struct CombinedState {
     timestep: u32,
     foi: Option<Foi>,
     infection: Option<Infection>,
     biomass: Option<Biomass>,
     mortality: Option<Mortality>,
+    mortality_occurred: Option<StateFlags>,
+    infection_occurred: Option<StateFlags>,
 }
 
 pub fn euclidean_distance(a: &(usize, usize), b: &(usize, usize)) -> f64 {
@@ -1079,6 +1101,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let infection_dir = args.dir.join("infection");
     let biomass_dir = args.dir.join("biomass");
     let mortality_dir = args.dir.join("mortality");
+    let mortality_occurred_dir = args.dir.join("mortality_occurred");
+    let infection_occurred_dir = args.dir.join("infection_occurred");
 
     let mut foi_files: Vec<PathBuf> = if foi_dir.is_dir() {
         WalkDir::new(&foi_dir)
@@ -1156,6 +1180,44 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     };
     mortality_files.sort_by(|a, b| compare_paths_natural(a, b));
 
+    let mut mortality_occurred_files: Vec<PathBuf> = if mortality_occurred_dir.is_dir() {
+        WalkDir::new(&mortality_occurred_dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path().to_path_buf())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| {
+                p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.chars().all(|c| c.is_ascii_digit()))
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    mortality_occurred_files.sort_by(|a, b| compare_paths_natural(a, b));
+
+    let mut infection_occurred_files: Vec<PathBuf> = if infection_occurred_dir.is_dir() {
+        WalkDir::new(&infection_occurred_dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path().to_path_buf())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| {
+                p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.chars().all(|c| c.is_ascii_digit()))
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    infection_occurred_files.sort_by(|a, b| compare_paths_natural(a, b));
+
     let mut by_timestep: HashMap<u32, MapGrouping> = HashMap::new();
     for path in foi_files {
         let bytes = fs::read(&path)?;
@@ -1207,6 +1269,32 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    for path in mortality_occurred_files {
+        let bytes = fs::read(&path)?;
+        match bincode::deserialize::<StateMap>(&bytes) {
+            Ok(map) => {
+                let timestep = map.timestep;
+                let entry = by_timestep.entry(timestep).or_default();
+                entry.mortality_occurred = Some(map);
+            }
+            Err(err) => {
+                eprintln!("ERR {} {}", path.display(), err);
+            }
+        }
+    }
+    for path in infection_occurred_files {
+        let bytes = fs::read(&path)?;
+        match bincode::deserialize::<StateMap>(&bytes) {
+            Ok(map) => {
+                let timestep = map.timestep;
+                let entry = by_timestep.entry(timestep).or_default();
+                entry.infection_occurred = Some(map);
+            }
+            Err(err) => {
+                eprintln!("ERR {} {}", path.display(), err);
+            }
+        }
+    }
     let mut combined: BTreeMap<u32, CombinedState> = BTreeMap::new();
     for (timestep, group) in by_timestep.into_iter() {
         let mut combined_state = CombinedState {
@@ -1215,6 +1303,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             infection: None,
             biomass: None,
             mortality: None,
+            mortality_occurred: None,
+            infection_occurred: None,
         };
 
         let mut some_data_seen = false;
@@ -1300,6 +1390,68 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             }
             combined_state.mortality = Some(Mortality {
                 data: mortality.data,
+            });
+            some_data_seen = true;
+        }
+
+        if let Some(mortality_occurred) = group.mortality_occurred {
+            if mortality_occurred.timestep != timestep {
+                return Err(format!(
+                    "Mismatched timestep for mortality_occurred at ts {}",
+                    timestep
+                )
+                .into());
+            }
+            if mortality_occurred.width != width || mortality_occurred.height != height {
+                return Err(format!(
+                    "Unexpected dimensions for mortality_occurred at ts {}: {}x{} (expected {}x{})",
+                    timestep, mortality_occurred.width, mortality_occurred.height, width, height
+                )
+                .into());
+            }
+            let expected_len = width as usize * height as usize;
+            if mortality_occurred.data.len() != expected_len {
+                return Err(format!(
+                    "Mismatched mortality_occurred length at ts {}: {} (expected {})",
+                    timestep,
+                    mortality_occurred.data.len(),
+                    expected_len
+                )
+                .into());
+            }
+            combined_state.mortality_occurred = Some(StateFlags {
+                data: mortality_occurred.data,
+            });
+            some_data_seen = true;
+        }
+
+        if let Some(infection_occurred) = group.infection_occurred {
+            if infection_occurred.timestep != timestep {
+                return Err(format!(
+                    "Mismatched timestep for infection_occurred at ts {}",
+                    timestep
+                )
+                .into());
+            }
+            if infection_occurred.width != width || infection_occurred.height != height {
+                return Err(format!(
+                    "Unexpected dimensions for infection_occurred at ts {}: {}x{} (expected {}x{})",
+                    timestep, infection_occurred.width, infection_occurred.height, width, height
+                )
+                .into());
+            }
+            let expected_len = width as usize * height as usize;
+            if infection_occurred.data.len() != expected_len {
+                return Err(format!(
+                    "Mismatched infection_occurred length at ts {}: {} (expected {})",
+                    timestep,
+                    infection_occurred.data.len(),
+                    expected_len
+                )
+                .into());
+            }
+            combined_state.infection_occurred = Some(StateFlags {
+                data: infection_occurred.data,
             });
             some_data_seen = true;
         }
@@ -1390,6 +1542,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
 
         let infection_source: (usize, usize) = (x, y);
 
+        let image_cfg = GridRenderConfig::default();
+
         let distances_from_infection_source_1_indexed = {
             let mut map: HashMap<(usize, usize), f64> = HashMap::new();
             for i in 1..=(width as usize) {
@@ -1414,6 +1568,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     )
                     .into());
                 }
+
+                let foi_mean = mean_kahan(&foi.data);
 
                 let foi_99th_percentile = percentile_nearest(&foi.data, 0.99)?;
                 let foi_95th_percentile = percentile_nearest(&foi.data, 0.95)?;
@@ -1777,6 +1933,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 previous_foi_10th_percentile_mean_distance_from_source =
                     foi_10th_percentile_mean_distance_from_source;
 
+                workbook.write_number(Column::FOIMean.number(), foi_mean)?;
                 workbook.write_number(Column::FOI99thPercentile.number(), foi_99th_percentile)?;
                 workbook.write_number(Column::FOI95thPercentile.number(), foi_95th_percentile)?;
                 workbook.write_number(Column::FOI90thPercentile.number(), foi_90th_percentile)?;
@@ -2848,7 +3005,6 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             }
 
             if let Some(infection) = &state.infection {
-                let cfg = GridRenderConfig::default();
                 let start = std::time::Instant::now();
                 let _ = render_infection_state_png(
                     &args.output_dir,
@@ -2858,11 +3014,39 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     &infection.healthy_sites,
                     &infection.infected_sites,
                     &infection.ignored_sites,
-                    &cfg,
+                    &image_cfg,
                 )?;
                 let ms = start.elapsed().as_millis();
                 img_time_sum_ms += ms;
                 img_time_count += 1;
+            }
+
+            if let Some(mortality_occurred) = &state.mortality_occurred {
+                render_state_map_png(
+                    &args.output_dir,
+                    "mortality_occurred",
+                    state.timestep,
+                    width,
+                    height,
+                    mortality_occurred.data.as_ref(),
+                    [255, 0, 0, 255],
+                    [0, 0, 0, 255],
+                    &image_cfg,
+                )?;
+            }
+
+            if let Some(infection_occurred) = &state.infection_occurred {
+                render_state_map_png(
+                    &args.output_dir,
+                    "infection_occurred",
+                    state.timestep,
+                    width,
+                    height,
+                    infection_occurred.data.as_ref(),
+                    [255, 0, 0, 255],
+                    [0, 0, 0, 255],
+                    &image_cfg,
+                )?;
             }
 
             workbook.write_number(Column::Timestep.number(), state.timestep as f64)?;

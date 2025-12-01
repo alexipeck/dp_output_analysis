@@ -246,6 +246,32 @@ pub fn render_infection_state_png(
     Ok(out_path)
 }
 
+pub fn render_state_map_png(
+    base_dir: impl AsRef<Path>,
+    subdir: &str,
+    timestep: u32,
+    grid_w: u32,
+    grid_h: u32,
+    state: &[bool],
+    true_color: [u8; 4],
+    false_color: [u8; 4],
+    cfg: &GridRenderConfig,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let out_dir = base_dir.as_ref().join(subdir);
+    let out_path = out_dir.join(format!("{}.png", timestep));
+
+    render_cells_png(&out_path, grid_w, grid_h, cfg, |gx, gy, _ctx| {
+        let idx = (gy as usize) * (grid_w as usize) + (gx as usize);
+        if state.get(idx).copied().unwrap_or(false) {
+            true_color
+        } else {
+            false_color
+        }
+    })?;
+
+    Ok(out_path)
+}
+
 pub fn render_foi_png(
     base_dir: impl AsRef<Path>,
     timestep: u32,
