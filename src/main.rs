@@ -3,7 +3,7 @@ use rust_xlsxwriter::worksheet::Worksheet;
 use rust_xlsxwriter::{
     Color, ConditionalFormatCell, ConditionalFormatCellRule, Format, Note, XlsxError,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
@@ -936,7 +936,7 @@ use crate::image_grid::{
 #[command(
     name = "dp_output_analysis",
     version,
-    about = "Analyze .bin representations in a directory",
+    about = "Analyze .json representations in a directory",
     arg_required_else_help = true
 )]
 struct Args {
@@ -961,6 +961,22 @@ struct Args {
     cd: f64,
 }
 
+fn deserialize_tuple_array<'de, D>(deserializer: D) -> Result<Box<[(u32, u32)]>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let vec: Vec<[u32; 2]> = Deserialize::deserialize(deserializer)?;
+    Ok(vec.into_iter().map(|arr| (arr[0], arr[1])).collect::<Vec<_>>().into_boxed_slice())
+}
+
+fn deserialize_tuple3_array<'de, D>(deserializer: D) -> Result<Box<[(u64, u64, u64)]>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let vec: Vec<[u64; 3]> = Deserialize::deserialize(deserializer)?;
+    Ok(vec.into_iter().map(|arr| (arr[0], arr[1], arr[2])).collect::<Vec<_>>().into_boxed_slice())
+}
+
 #[derive(Serialize, Deserialize)]
 struct F64Map {
     pub timestep: u32,
@@ -974,8 +990,11 @@ struct InfectionStateMap {
     pub timestep: u32,
     pub width: u32,
     pub height: u32,
+    #[serde(deserialize_with = "deserialize_tuple_array")]
     pub healthy_sites: Box<[(u32, u32)]>,
+    #[serde(deserialize_with = "deserialize_tuple_array")]
     pub infected_sites: Box<[(u32, u32)]>,
+    #[serde(deserialize_with = "deserialize_tuple_array")]
     pub ignored_sites: Box<[(u32, u32)]>,
 }
 
@@ -984,6 +1003,7 @@ struct BiomassMap {
     pub timestep: u32,
     pub width: u32,
     pub height: u32,
+    #[serde(deserialize_with = "deserialize_tuple3_array")]
     pub biomass: Box<[(u64, u64, u64)]>,
 }
 
@@ -1113,7 +1133,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .map(|e| e.path().to_path_buf())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
             .filter(|p| {
                 p.file_stem()
                     .and_then(|s| s.to_str())
@@ -1132,7 +1152,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .map(|e| e.path().to_path_buf())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
             .filter(|p| {
                 p.file_stem()
                     .and_then(|s| s.to_str())
@@ -1151,7 +1171,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .map(|e| e.path().to_path_buf())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
             .filter(|p| {
                 p.file_stem()
                     .and_then(|s| s.to_str())
@@ -1170,7 +1190,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .map(|e| e.path().to_path_buf())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
             .filter(|p| {
                 p.file_stem()
                     .and_then(|s| s.to_str())
@@ -1189,7 +1209,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .map(|e| e.path().to_path_buf())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
             .filter(|p| {
                 p.file_stem()
                     .and_then(|s| s.to_str())
@@ -1208,7 +1228,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .map(|e| e.path().to_path_buf())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
             .filter(|p| {
                 p.file_stem()
                     .and_then(|s| s.to_str())
@@ -1227,7 +1247,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .map(|e| e.path().to_path_buf())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
             .filter(|p| {
                 p.file_stem()
                     .and_then(|s| s.to_str())
@@ -1242,8 +1262,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
 
     let mut by_timestep: HashMap<u32, MapGrouping> = HashMap::new();
     for path in foi_files {
-        let bytes = fs::read(&path)?;
-        match bincode::deserialize::<F64Map>(&bytes) {
+        let content = fs::read_to_string(&path)?;
+        match serde_json::from_str::<F64Map>(&content) {
             Ok(map) => {
                 let ts = map.timestep;
                 let entry = by_timestep.entry(ts).or_default();
@@ -1255,9 +1275,12 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         }
     }
     for path in infection_files {
-        let bytes = fs::read(&path)?;
-        match bincode::deserialize::<InfectionStateMap>(&bytes) {
+        let content = fs::read_to_string(&path)?;
+        match serde_json::from_str::<InfectionStateMap>(&content) {
             Ok(map) => {
+                if map.infected_sites.len() > 1000000 {
+                    eprintln!("WARNING: {} has suspiciously large infected_sites.len() = {} (timestep {})", path.display(), map.infected_sites.len(), map.timestep);
+                }
                 let entry = by_timestep.entry(map.timestep).or_default();
                 entry.infection = Some(map);
             }
@@ -1267,8 +1290,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         }
     }
     for path in biomass_files {
-        let bytes = fs::read(&path)?;
-        match bincode::deserialize::<BiomassMap>(&bytes) {
+        let content = fs::read_to_string(&path)?;
+        match serde_json::from_str::<BiomassMap>(&content) {
             Ok(map) => {
                 let entry = by_timestep.entry(map.timestep).or_default();
                 entry.biomass = Some(map);
@@ -1279,8 +1302,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         }
     }
     for path in mortality_files {
-        let bytes = fs::read(&path)?;
-        match bincode::deserialize::<MortalityMap>(&bytes) {
+        let content = fs::read_to_string(&path)?;
+        match serde_json::from_str::<MortalityMap>(&content) {
             Ok(map) => {
                 let timestep = map.timestep;
                 let entry = by_timestep.entry(timestep).or_default();
@@ -1292,8 +1315,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         }
     }
     for path in mortality_occurred_files {
-        let bytes = fs::read(&path)?;
-        match bincode::deserialize::<StateMap>(&bytes) {
+        let content = fs::read_to_string(&path)?;
+        match serde_json::from_str::<StateMap>(&content) {
             Ok(map) => {
                 let timestep = map.timestep;
                 let entry = by_timestep.entry(timestep).or_default();
@@ -1305,8 +1328,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         }
     }
     for path in infection_occurred_files {
-        let bytes = fs::read(&path)?;
-        match bincode::deserialize::<StateMap>(&bytes) {
+        let content = fs::read_to_string(&path)?;
+        match serde_json::from_str::<StateMap>(&content) {
             Ok(map) => {
                 let timestep = map.timestep;
                 let entry = by_timestep.entry(timestep).or_default();
@@ -1318,8 +1341,8 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         }
     }
     for path in regeneration_occurred_files {
-        let bytes = fs::read(&path)?;
-        match bincode::deserialize::<StateMap>(&bytes) {
+        let content = fs::read_to_string(&path)?;
+        match serde_json::from_str::<StateMap>(&content) {
             Ok(map) => {
                 let timestep = map.timestep;
                 let entry = by_timestep.entry(timestep).or_default();
@@ -2301,8 +2324,11 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 }; */
 
                 let total_number_of_infected_sites = infection.infected_sites.len();
-                let newly_infected_sites =
-                    infection.infected_sites.len() - previous_number_of_infected_sites;
+                let newly_infected_sites = if infection.infected_sites.len() >= previous_number_of_infected_sites {
+                    infection.infected_sites.len() - previous_number_of_infected_sites
+                } else {
+                    0
+                };
                 let infected_area = infection.infected_sites.len() as f64
                     / (width as usize * height as usize) as f64;
 
