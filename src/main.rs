@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
+use std::io::Write;
 use std::path::PathBuf;
 use std::{fs, io};
 use strum::{EnumIter, IntoEnumIterator};
@@ -18,6 +19,36 @@ use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 lazy_static! {
     static ref ROW_COUNTER: AtomicU32 = AtomicU32::new(1);
+}
+
+pub trait Progress: Send {
+    fn phase(&self, msg: &str, total_years: usize);
+    fn year_progress(&self, current: usize, total: usize, timestep: u32);
+    fn finish(&self) {
+        let _ = writeln!(io::stderr());
+        let _ = io::stderr().flush();
+    }
+}
+
+struct StderrProgress;
+
+impl Progress for StderrProgress {
+    fn phase(&self, msg: &str, total_years: usize) {
+        let _ = writeln!(io::stderr(), "{} ({} years)", msg, total_years);
+        let _ = io::stderr().flush();
+    }
+    fn year_progress(&self, current: usize, total: usize, timestep: u32) {
+        let _ = write!(
+            io::stderr(),
+            "\r  year {} of {} (timestep {})  ",
+            current, total, timestep
+        );
+        let _ = io::stderr().flush();
+    }
+    fn finish(&self) {
+        let _ = writeln!(io::stderr());
+        let _ = io::stderr().flush();
+    }
 }
 
 struct Workbook {
@@ -1047,12 +1078,169 @@ struct CombinedState {
     regeneration_occurred: Option<StateFlags>,
 }
 
-pub fn euclidean_distance(a: &(usize, usize), b: &(usize, usize)) -> f64 {
-    (((b.0 - a.0).pow(2) + (b.1 - a.1).pow(2)) as f64).sqrt()
-}
+const PERCENTILE_LEVELS: [f64; 19] = [
+    0.99, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30,
+    0.25, 0.20, 0.15, 0.10,
+];
 
-pub fn index_to_coordinates(index: usize, width: usize) -> (usize, usize) {
-    (index % width, index / width)
+const INF_PERCENTILE_COLUMNS: [Column; PERCENTILE_LEVELS.len()] = [
+    Column::Inf99thPercentile,
+    Column::Inf95thPercentile,
+    Column::Inf90thPercentile,
+    Column::Inf85thPercentile,
+    Column::Inf80thPercentile,
+    Column::Inf75thPercentile,
+    Column::Inf70thPercentile,
+    Column::Inf65thPercentile,
+    Column::Inf60thPercentile,
+    Column::Inf55thPercentile,
+    Column::Inf50thPercentile,
+    Column::Inf45thPercentile,
+    Column::Inf40thPercentile,
+    Column::Inf35thPercentile,
+    Column::Inf30thPercentile,
+    Column::Inf25thPercentile,
+    Column::Inf20thPercentile,
+    Column::Inf15thPercentile,
+    Column::Inf10thPercentile,
+];
+
+const INF_MEAN_DISTANCE_COLUMNS: [Column; PERCENTILE_LEVELS.len()] = [
+    Column::Inf99thPercentileMeanDistanceMeters,
+    Column::Inf95thPercentileMeanDistanceMeters,
+    Column::Inf90thPercentileMeanDistanceMeters,
+    Column::Inf85thPercentileMeanDistanceMeters,
+    Column::Inf80thPercentileMeanDistanceMeters,
+    Column::Inf75thPercentileMeanDistanceMeters,
+    Column::Inf70thPercentileMeanDistanceMeters,
+    Column::Inf65thPercentileMeanDistanceMeters,
+    Column::Inf60thPercentileMeanDistanceMeters,
+    Column::Inf55thPercentileMeanDistanceMeters,
+    Column::Inf50thPercentileMeanDistanceMeters,
+    Column::Inf45thPercentileMeanDistanceMeters,
+    Column::Inf40thPercentileMeanDistanceMeters,
+    Column::Inf35thPercentileMeanDistanceMeters,
+    Column::Inf30thPercentileMeanDistanceMeters,
+    Column::Inf25thPercentileMeanDistanceMeters,
+    Column::Inf20thPercentileMeanDistanceMeters,
+    Column::Inf15thPercentileMeanDistanceMeters,
+    Column::Inf10thPercentileMeanDistanceMeters,
+];
+
+const INF_SPREAD_COLUMNS: [Column; PERCENTILE_LEVELS.len()] = [
+    Column::Inf99thPercentileSpreadMetersPerYear,
+    Column::Inf95thPercentileSpreadMetersPerYear,
+    Column::Inf90thPercentileSpreadMetersPerYear,
+    Column::Inf85thPercentileSpreadMetersPerYear,
+    Column::Inf80thPercentileSpreadMetersPerYear,
+    Column::Inf75thPercentileSpreadMetersPerYear,
+    Column::Inf70thPercentileSpreadMetersPerYear,
+    Column::Inf65thPercentileSpreadMetersPerYear,
+    Column::Inf60thPercentileSpreadMetersPerYear,
+    Column::Inf55thPercentileSpreadMetersPerYear,
+    Column::Inf50thPercentileSpreadMetersPerYear,
+    Column::Inf45thPercentileSpreadMetersPerYear,
+    Column::Inf40thPercentileSpreadMetersPerYear,
+    Column::Inf35thPercentileSpreadMetersPerYear,
+    Column::Inf30thPercentileSpreadMetersPerYear,
+    Column::Inf25thPercentileSpreadMetersPerYear,
+    Column::Inf20thPercentileSpreadMetersPerYear,
+    Column::Inf15thPercentileSpreadMetersPerYear,
+    Column::Inf10thPercentileSpreadMetersPerYear,
+];
+
+const FOI_PERCENTILE_COLUMNS: [Column; PERCENTILE_LEVELS.len()] = [
+    Column::FOI99thPercentile,
+    Column::FOI95thPercentile,
+    Column::FOI90thPercentile,
+    Column::FOI85thPercentile,
+    Column::FOI80thPercentile,
+    Column::FOI75thPercentile,
+    Column::FOI70thPercentile,
+    Column::FOI65thPercentile,
+    Column::FOI60thPercentile,
+    Column::FOI55thPercentile,
+    Column::FOI50thPercentile,
+    Column::FOI45thPercentile,
+    Column::FOI40thPercentile,
+    Column::FOI35thPercentile,
+    Column::FOI30thPercentile,
+    Column::FOI25thPercentile,
+    Column::FOI20thPercentile,
+    Column::FOI15thPercentile,
+    Column::FOI10thPercentile,
+];
+
+const FOI_MEAN_COLUMNS: [Column; PERCENTILE_LEVELS.len()] = [
+    Column::FOI99thPercentileMean,
+    Column::FOI95thPercentileMean,
+    Column::FOI90thPercentileMean,
+    Column::FOI85thPercentileMean,
+    Column::FOI80thPercentileMean,
+    Column::FOI75thPercentileMean,
+    Column::FOI70thPercentileMean,
+    Column::FOI65thPercentileMean,
+    Column::FOI60thPercentileMean,
+    Column::FOI55thPercentileMean,
+    Column::FOI50thPercentileMean,
+    Column::FOI45thPercentileMean,
+    Column::FOI40thPercentileMean,
+    Column::FOI35thPercentileMean,
+    Column::FOI30thPercentileMean,
+    Column::FOI25thPercentileMean,
+    Column::FOI20thPercentileMean,
+    Column::FOI15thPercentileMean,
+    Column::FOI10thPercentileMean,
+];
+
+const FOI_MEAN_DISTANCE_COLUMNS: [Column; PERCENTILE_LEVELS.len()] = [
+    Column::FOI99thPercentileMeanDistanceMeters,
+    Column::FOI95thPercentileMeanDistanceMeters,
+    Column::FOI90thPercentileMeanDistanceMeters,
+    Column::FOI85thPercentileMeanDistanceMeters,
+    Column::FOI80thPercentileMeanDistanceMeters,
+    Column::FOI75thPercentileMeanDistanceMeters,
+    Column::FOI70thPercentileMeanDistanceMeters,
+    Column::FOI65thPercentileMeanDistanceMeters,
+    Column::FOI60thPercentileMeanDistanceMeters,
+    Column::FOI55thPercentileMeanDistanceMeters,
+    Column::FOI50thPercentileMeanDistanceMeters,
+    Column::FOI45thPercentileMeanDistanceMeters,
+    Column::FOI40thPercentileMeanDistanceMeters,
+    Column::FOI35thPercentileMeanDistanceMeters,
+    Column::FOI30thPercentileMeanDistanceMeters,
+    Column::FOI25thPercentileMeanDistanceMeters,
+    Column::FOI20thPercentileMeanDistanceMeters,
+    Column::FOI15thPercentileMeanDistanceMeters,
+    Column::FOI10thPercentileMeanDistanceMeters,
+];
+
+const FOI_SPREAD_COLUMNS: [Column; PERCENTILE_LEVELS.len()] = [
+    Column::FOI99thPercentileSpreadMetersPerYear,
+    Column::FOI95thPercentileSpreadMetersPerYear,
+    Column::FOI90thPercentileSpreadMetersPerYear,
+    Column::FOI85thPercentileSpreadMetersPerYear,
+    Column::FOI80thPercentileSpreadMetersPerYear,
+    Column::FOI75thPercentileSpreadMetersPerYear,
+    Column::FOI70thPercentileSpreadMetersPerYear,
+    Column::FOI65thPercentileSpreadMetersPerYear,
+    Column::FOI60thPercentileSpreadMetersPerYear,
+    Column::FOI55thPercentileSpreadMetersPerYear,
+    Column::FOI50thPercentileSpreadMetersPerYear,
+    Column::FOI45thPercentileSpreadMetersPerYear,
+    Column::FOI40thPercentileSpreadMetersPerYear,
+    Column::FOI35thPercentileSpreadMetersPerYear,
+    Column::FOI30thPercentileSpreadMetersPerYear,
+    Column::FOI25thPercentileSpreadMetersPerYear,
+    Column::FOI20thPercentileSpreadMetersPerYear,
+    Column::FOI15thPercentileSpreadMetersPerYear,
+    Column::FOI10thPercentileSpreadMetersPerYear,
+];
+
+pub fn euclidean_distance(a: &(usize, usize), b: &(usize, usize)) -> f64 {
+    let dx = b.0 as f64 - a.0 as f64;
+    let dy = b.1 as f64 - a.1 as f64;
+    (dx * dx + dy * dy).sqrt()
 }
 
 pub fn coordinates_to_index(x: usize, y: usize, width: usize) -> usize {
@@ -1077,6 +1265,116 @@ where
         n += 1;
     }
     if n == 0 { 0.0 } else { sum / n as f64 }
+}
+
+fn write_columns<const N: usize>(
+    workbook: &mut Workbook,
+    columns: &[Column; N],
+    values: &[f64; N],
+) -> Result<(), XlsxError> {
+    for (column, value) in columns.iter().zip(values.iter()) {
+        workbook.write_number(column.number(), *value)?;
+    }
+    Ok(())
+}
+
+fn percentile_index(len: usize, q: f64) -> usize {
+    let last_idx = len - 1;
+    if q >= 1.0 {
+        last_idx
+    } else {
+        (q * last_idx as f64).round() as usize
+    }
+}
+
+fn nearest_percentiles(data: &[f64]) -> Result<[f64; PERCENTILE_LEVELS.len()], Box<dyn Error>> {
+    if data.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "empty data").into());
+    }
+
+    let mut sorted = data.to_vec();
+    sorted.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+
+    let mut out = [0.0; PERCENTILE_LEVELS.len()];
+    for (idx, q) in PERCENTILE_LEVELS.iter().enumerate() {
+        out[idx] = sorted[percentile_index(sorted.len(), *q)];
+    }
+    Ok(out)
+}
+
+fn means_at_or_above_thresholds(
+    values: &[f64],
+    thresholds: &[f64; PERCENTILE_LEVELS.len()],
+) -> [f64; PERCENTILE_LEVELS.len()] {
+    let mut sums = [0.0; PERCENTILE_LEVELS.len()];
+    let mut counts = [0usize; PERCENTILE_LEVELS.len()];
+
+    for &value in values {
+        for (idx, threshold) in thresholds.iter().enumerate() {
+            if value >= *threshold {
+                sums[idx] += value;
+                counts[idx] += 1;
+            }
+        }
+    }
+
+    let mut means = [0.0; PERCENTILE_LEVELS.len()];
+    for idx in 0..PERCENTILE_LEVELS.len() {
+        if counts[idx] > 0 {
+            means[idx] = sums[idx] / counts[idx] as f64;
+        }
+    }
+    means
+}
+
+fn paired_means_at_or_above_thresholds(
+    values: &[f64],
+    distances: &[f64],
+    thresholds: &[f64; PERCENTILE_LEVELS.len()],
+) -> (
+    [f64; PERCENTILE_LEVELS.len()],
+    [f64; PERCENTILE_LEVELS.len()],
+) {
+    let mut value_sums = [0.0; PERCENTILE_LEVELS.len()];
+    let mut distance_sums = [0.0; PERCENTILE_LEVELS.len()];
+    let mut counts = [0usize; PERCENTILE_LEVELS.len()];
+
+    for (&value, &distance) in values.iter().zip(distances.iter()) {
+        if distance == 0.0 {
+            continue;
+        }
+        for (idx, threshold) in thresholds.iter().enumerate() {
+            if value >= *threshold {
+                value_sums[idx] += value;
+                distance_sums[idx] += distance;
+                counts[idx] += 1;
+            }
+        }
+    }
+
+    let mut value_means = [0.0; PERCENTILE_LEVELS.len()];
+    let mut distance_means = [0.0; PERCENTILE_LEVELS.len()];
+    for idx in 0..PERCENTILE_LEVELS.len() {
+        if counts[idx] > 0 {
+            value_means[idx] = value_sums[idx] / counts[idx] as f64;
+            distance_means[idx] = distance_sums[idx] / counts[idx] as f64;
+        }
+    }
+    (value_means, distance_means)
+}
+
+fn spread_rates<const N: usize>(
+    current: &[f64; N],
+    previous: &mut Option<[f64; N]>,
+) -> [f64; N] {
+    let mut spreads = [0.0; N];
+    if let Some(previous_values) = previous.as_ref() {
+        for idx in 0..N {
+            spreads[idx] = current[idx] - previous_values[idx];
+        }
+    }
+    *previous = Some(*current);
+    spreads
 }
 
 fn main() {
@@ -1531,6 +1829,9 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         combined.insert(timestep, combined_state);
     }
     {
+        let total_years = combined.len();
+        let progress: &dyn Progress = &StderrProgress;
+        progress.phase("Generating images and output document", total_years);
         let (x, y, cd) = (args.x, args.y, args.cd);
         let mut workbook = Workbook::new();
         {
@@ -1544,44 +1845,10 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         let mut previous_number_of_infected_sites: usize = 0;
         let mut previous_infected_area: f64 = 0.0;
         let mut previous_newly_infected_sites: usize = 0;
-        let mut previous_infection_99th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_95th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_90th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_85th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_80th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_75th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_70th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_65th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_60th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_55th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_50th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_45th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_40th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_35th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_30th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_25th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_20th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_15th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_infection_10th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_99th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_95th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_90th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_85th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_80th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_75th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_70th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_65th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_60th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_55th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_50th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_45th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_40th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_35th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_30th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_25th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_20th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_15th_percentile_mean_distance_from_source: f64 = 0.0;
-        let mut previous_foi_10th_percentile_mean_distance_from_source: f64 = 0.0;
+        let mut previous_infection_percentile_mean_distances: Option<[f64; PERCENTILE_LEVELS.len()]> =
+            None;
+        let mut previous_foi_percentile_mean_distances: Option<[f64; PERCENTILE_LEVELS.len()]> =
+            None;
         let mut previous_total_healthy_biomass: f64 = 0.0;
         let mut previous_total_infected_biomass: f64 = 0.0;
         let mut previous_total_ignored_biomass: f64 = 0.0;
@@ -1612,21 +1879,19 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         let image_cfg = GridRenderConfig::default();
 
         let distances_from_infection_source_1_indexed = {
-            let mut map: HashMap<(usize, usize), f64> = HashMap::new();
-            for i in 1..=(width as usize) {
-                for j in 1..=(height as usize) {
-                    let site = (i, j);
-                    let distance = euclidean_distance(&infection_source, &site) * cd;
-                    //exclude initial infection point
-                    if distance > 0.0 {
-                        map.insert(site, distance);
-                    }
+            let mut distances = vec![0.0; width as usize * height as usize];
+            for y in 0..height as usize {
+                for x in 0..width as usize {
+                    let site = (x + 1, y + 1);
+                    let index = coordinates_to_index(x, y, width as usize);
+                    distances[index] = euclidean_distance(&infection_source, &site) * cd;
                 }
             }
-            map
+            distances
         };
 
-        for (_, state) in combined.into_iter() {
+        for (current_index, (_, state)) in combined.into_iter().enumerate() {
+            progress.year_progress(current_index + 1, total_years, state.timestep);
             if let Some(foi) = &state.foi {
                 if foi.data.iter().any(|v| v.is_nan()) {
                     return Err(io::Error::new(
@@ -1637,619 +1902,48 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 }
 
                 let foi_mean = mean_kahan(&foi.data);
-
-                let foi_99th_percentile = percentile_nearest(&foi.data, 0.99)?;
-                let foi_95th_percentile = percentile_nearest(&foi.data, 0.95)?;
-                let foi_90th_percentile = percentile_nearest(&foi.data, 0.90)?;
-                let foi_85th_percentile = percentile_nearest(&foi.data, 0.85)?;
-                let foi_80th_percentile = percentile_nearest(&foi.data, 0.80)?;
-                let foi_75th_percentile = percentile_nearest(&foi.data, 0.75)?;
-                let foi_70th_percentile = percentile_nearest(&foi.data, 0.70)?;
-                let foi_65th_percentile = percentile_nearest(&foi.data, 0.65)?;
-                let foi_60th_percentile = percentile_nearest(&foi.data, 0.60)?;
-                let foi_55th_percentile = percentile_nearest(&foi.data, 0.55)?;
-                let foi_50th_percentile = percentile_nearest(&foi.data, 0.50)?;
-                let foi_45th_percentile = percentile_nearest(&foi.data, 0.45)?;
-                let foi_40th_percentile = percentile_nearest(&foi.data, 0.40)?;
-                let foi_35th_percentile = percentile_nearest(&foi.data, 0.35)?;
-                let foi_30th_percentile = percentile_nearest(&foi.data, 0.30)?;
-                let foi_25th_percentile = percentile_nearest(&foi.data, 0.25)?;
-                let foi_20th_percentile = percentile_nearest(&foi.data, 0.20)?;
-                let foi_15th_percentile = percentile_nearest(&foi.data, 0.15)?;
-                let foi_10th_percentile = percentile_nearest(&foi.data, 0.10)?;
-
-                let (
-                    foi_entries_above_99th_percentile,
-                    foi_entries_above_95th_percentile,
-                    foi_entries_above_90th_percentile,
-                    foi_entries_above_85th_percentile,
-                    foi_entries_above_80th_percentile,
-                    foi_entries_above_75th_percentile,
-                    foi_entries_above_70th_percentile,
-                    foi_entries_above_65th_percentile,
-                    foi_entries_above_60th_percentile,
-                    foi_entries_above_55th_percentile,
-                    foi_entries_above_50th_percentile,
-                    foi_entries_above_45th_percentile,
-                    foi_entries_above_40th_percentile,
-                    foi_entries_above_35th_percentile,
-                    foi_entries_above_30th_percentile,
-                    foi_entries_above_25th_percentile,
-                    foi_entries_above_20th_percentile,
-                    foi_entries_above_15th_percentile,
-                    foi_entries_above_10th_percentile,
-                ) = {
-                    let mut foi_entries_above_99th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_95th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_90th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_85th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_80th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_75th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_70th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_65th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_60th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_55th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_50th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_45th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_40th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_35th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_30th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_25th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_20th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_15th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    let mut foi_entries_above_10th_percentile: (Vec<f64>, Vec<f64>) =
-                        Default::default();
-                    for (index, foi_value) in foi.data.iter().enumerate() {
-                        let coordinates = index_to_coordinates(index, width as usize);
-                        let coordinates_1_indexed = (coordinates.0 + 1, coordinates.1 + 1);
-                        let distance =
-                            euclidean_distance(&infection_source, &coordinates_1_indexed) * cd;
-                        if distance == 0.0 {
-                            continue;
-                        }
-                        if foi_value >= &foi_99th_percentile {
-                            foi_entries_above_99th_percentile.0.push(*foi_value);
-                            foi_entries_above_99th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_95th_percentile {
-                            foi_entries_above_95th_percentile.0.push(*foi_value);
-                            foi_entries_above_95th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_90th_percentile {
-                            foi_entries_above_90th_percentile.0.push(*foi_value);
-                            foi_entries_above_90th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_85th_percentile {
-                            foi_entries_above_85th_percentile.0.push(*foi_value);
-                            foi_entries_above_85th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_80th_percentile {
-                            foi_entries_above_80th_percentile.0.push(*foi_value);
-                            foi_entries_above_80th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_75th_percentile {
-                            foi_entries_above_75th_percentile.0.push(*foi_value);
-                            foi_entries_above_75th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_70th_percentile {
-                            foi_entries_above_70th_percentile.0.push(*foi_value);
-                            foi_entries_above_70th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_65th_percentile {
-                            foi_entries_above_65th_percentile.0.push(*foi_value);
-                            foi_entries_above_65th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_60th_percentile {
-                            foi_entries_above_60th_percentile.0.push(*foi_value);
-                            foi_entries_above_60th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_55th_percentile {
-                            foi_entries_above_55th_percentile.0.push(*foi_value);
-                            foi_entries_above_55th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_50th_percentile {
-                            foi_entries_above_50th_percentile.0.push(*foi_value);
-                            foi_entries_above_50th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_45th_percentile {
-                            foi_entries_above_45th_percentile.0.push(*foi_value);
-                            foi_entries_above_45th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_40th_percentile {
-                            foi_entries_above_40th_percentile.0.push(*foi_value);
-                            foi_entries_above_40th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_35th_percentile {
-                            foi_entries_above_35th_percentile.0.push(*foi_value);
-                            foi_entries_above_35th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_30th_percentile {
-                            foi_entries_above_30th_percentile.0.push(*foi_value);
-                            foi_entries_above_30th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_25th_percentile {
-                            foi_entries_above_25th_percentile.0.push(*foi_value);
-                            foi_entries_above_25th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_20th_percentile {
-                            foi_entries_above_20th_percentile.0.push(*foi_value);
-                            foi_entries_above_20th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_15th_percentile {
-                            foi_entries_above_15th_percentile.0.push(*foi_value);
-                            foi_entries_above_15th_percentile.1.push(distance);
-                        }
-                        if foi_value >= &foi_10th_percentile {
-                            foi_entries_above_10th_percentile.0.push(*foi_value);
-                            foi_entries_above_10th_percentile.1.push(distance);
-                        }
+                let mut positive_foi_values = Vec::new();
+                let mut positive_foi_distances = Vec::new();
+                for (&foi_value, &distance) in foi
+                    .data
+                    .iter()
+                    .zip(distances_from_infection_source_1_indexed.iter())
+                {
+                    if foi_value.is_finite() && foi_value > 0.0 {
+                        positive_foi_values.push(foi_value);
+                        positive_foi_distances.push(distance);
                     }
-                    (
-                        foi_entries_above_99th_percentile,
-                        foi_entries_above_95th_percentile,
-                        foi_entries_above_90th_percentile,
-                        foi_entries_above_85th_percentile,
-                        foi_entries_above_80th_percentile,
-                        foi_entries_above_75th_percentile,
-                        foi_entries_above_70th_percentile,
-                        foi_entries_above_65th_percentile,
-                        foi_entries_above_60th_percentile,
-                        foi_entries_above_55th_percentile,
-                        foi_entries_above_50th_percentile,
-                        foi_entries_above_45th_percentile,
-                        foi_entries_above_40th_percentile,
-                        foi_entries_above_35th_percentile,
-                        foi_entries_above_30th_percentile,
-                        foi_entries_above_25th_percentile,
-                        foi_entries_above_20th_percentile,
-                        foi_entries_above_15th_percentile,
-                        foi_entries_above_10th_percentile,
-                    )
+                }
+
+                let foi_percentiles = if positive_foi_values.is_empty() {
+                    [0.0; PERCENTILE_LEVELS.len()]
+                } else {
+                    nearest_percentiles(&positive_foi_values)?
                 };
-
-                let foi_99th_percentile_mean =
-                    mean_kahan(foi_entries_above_99th_percentile.0.iter());
-                let foi_95th_percentile_mean =
-                    mean_kahan(foi_entries_above_95th_percentile.0.iter());
-                let foi_90th_percentile_mean =
-                    mean_kahan(foi_entries_above_90th_percentile.0.iter());
-                let foi_85th_percentile_mean =
-                    mean_kahan(foi_entries_above_85th_percentile.0.iter());
-                let foi_80th_percentile_mean =
-                    mean_kahan(foi_entries_above_80th_percentile.0.iter());
-                let foi_75th_percentile_mean =
-                    mean_kahan(foi_entries_above_75th_percentile.0.iter());
-                let foi_70th_percentile_mean =
-                    mean_kahan(foi_entries_above_70th_percentile.0.iter());
-                let foi_65th_percentile_mean =
-                    mean_kahan(foi_entries_above_65th_percentile.0.iter());
-                let foi_60th_percentile_mean =
-                    mean_kahan(foi_entries_above_60th_percentile.0.iter());
-                let foi_55th_percentile_mean =
-                    mean_kahan(foi_entries_above_55th_percentile.0.iter());
-                let foi_50th_percentile_mean =
-                    mean_kahan(foi_entries_above_50th_percentile.0.iter());
-                let foi_45th_percentile_mean =
-                    mean_kahan(foi_entries_above_45th_percentile.0.iter());
-                let foi_40th_percentile_mean =
-                    mean_kahan(foi_entries_above_40th_percentile.0.iter());
-                let foi_35th_percentile_mean =
-                    mean_kahan(foi_entries_above_35th_percentile.0.iter());
-                let foi_30th_percentile_mean =
-                    mean_kahan(foi_entries_above_30th_percentile.0.iter());
-                let foi_25th_percentile_mean =
-                    mean_kahan(foi_entries_above_25th_percentile.0.iter());
-                let foi_20th_percentile_mean =
-                    mean_kahan(foi_entries_above_20th_percentile.0.iter());
-                let foi_15th_percentile_mean =
-                    mean_kahan(foi_entries_above_15th_percentile.0.iter());
-                let foi_10th_percentile_mean =
-                    mean_kahan(foi_entries_above_10th_percentile.0.iter());
-
-                let foi_99th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_99th_percentile.1.iter());
-                let foi_95th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_95th_percentile.1.iter());
-                let foi_90th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_90th_percentile.1.iter());
-                let foi_85th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_85th_percentile.1.iter());
-                let foi_80th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_80th_percentile.1.iter());
-                let foi_75th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_75th_percentile.1.iter());
-                let foi_70th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_70th_percentile.1.iter());
-                let foi_65th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_65th_percentile.1.iter());
-                let foi_60th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_60th_percentile.1.iter());
-                let foi_55th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_55th_percentile.1.iter());
-                let foi_50th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_50th_percentile.1.iter());
-                let foi_45th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_45th_percentile.1.iter());
-                let foi_40th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_40th_percentile.1.iter());
-                let foi_35th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_35th_percentile.1.iter());
-                let foi_30th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_30th_percentile.1.iter());
-                let foi_25th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_25th_percentile.1.iter());
-                let foi_20th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_20th_percentile.1.iter());
-                let foi_15th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_15th_percentile.1.iter());
-                let foi_10th_percentile_mean_distance_from_source =
-                    mean_kahan(foi_entries_above_10th_percentile.1.iter());
-
-                let foi_99th_percentile_spread_rate_mpy =
-                    foi_99th_percentile_mean_distance_from_source
-                        - previous_foi_99th_percentile_mean_distance_from_source;
-                let foi_95th_percentile_spread_rate_mpy =
-                    foi_95th_percentile_mean_distance_from_source
-                        - previous_foi_95th_percentile_mean_distance_from_source;
-                let foi_90th_percentile_spread_rate_mpy =
-                    foi_90th_percentile_mean_distance_from_source
-                        - previous_foi_90th_percentile_mean_distance_from_source;
-                let foi_85th_percentile_spread_rate_mpy =
-                    foi_85th_percentile_mean_distance_from_source
-                        - previous_foi_85th_percentile_mean_distance_from_source;
-                let foi_80th_percentile_spread_rate_mpy =
-                    foi_80th_percentile_mean_distance_from_source
-                        - previous_foi_80th_percentile_mean_distance_from_source;
-                let foi_75th_percentile_spread_rate_mpy =
-                    foi_75th_percentile_mean_distance_from_source
-                        - previous_foi_75th_percentile_mean_distance_from_source;
-                let foi_70th_percentile_spread_rate_mpy =
-                    foi_70th_percentile_mean_distance_from_source
-                        - previous_foi_70th_percentile_mean_distance_from_source;
-                let foi_65th_percentile_spread_rate_mpy =
-                    foi_65th_percentile_mean_distance_from_source
-                        - previous_foi_65th_percentile_mean_distance_from_source;
-                let foi_60th_percentile_spread_rate_mpy =
-                    foi_60th_percentile_mean_distance_from_source
-                        - previous_foi_60th_percentile_mean_distance_from_source;
-                let foi_55th_percentile_spread_rate_mpy =
-                    foi_55th_percentile_mean_distance_from_source
-                        - previous_foi_55th_percentile_mean_distance_from_source;
-                let foi_50th_percentile_spread_rate_mpy =
-                    foi_50th_percentile_mean_distance_from_source
-                        - previous_foi_50th_percentile_mean_distance_from_source;
-                let foi_45th_percentile_spread_rate_mpy =
-                    foi_45th_percentile_mean_distance_from_source
-                        - previous_foi_45th_percentile_mean_distance_from_source;
-                let foi_40th_percentile_spread_rate_mpy =
-                    foi_40th_percentile_mean_distance_from_source
-                        - previous_foi_40th_percentile_mean_distance_from_source;
-                let foi_35th_percentile_spread_rate_mpy =
-                    foi_35th_percentile_mean_distance_from_source
-                        - previous_foi_35th_percentile_mean_distance_from_source;
-                let foi_30th_percentile_spread_rate_mpy =
-                    foi_30th_percentile_mean_distance_from_source
-                        - previous_foi_30th_percentile_mean_distance_from_source;
-                let foi_25th_percentile_spread_rate_mpy =
-                    foi_25th_percentile_mean_distance_from_source
-                        - previous_foi_25th_percentile_mean_distance_from_source;
-                let foi_20th_percentile_spread_rate_mpy =
-                    foi_20th_percentile_mean_distance_from_source
-                        - previous_foi_20th_percentile_mean_distance_from_source;
-                let foi_15th_percentile_spread_rate_mpy =
-                    foi_15th_percentile_mean_distance_from_source
-                        - previous_foi_15th_percentile_mean_distance_from_source;
-                let foi_10th_percentile_spread_rate_mpy =
-                    foi_10th_percentile_mean_distance_from_source
-                        - previous_foi_10th_percentile_mean_distance_from_source;
-
-                previous_foi_99th_percentile_mean_distance_from_source =
-                    foi_99th_percentile_mean_distance_from_source;
-                previous_foi_95th_percentile_mean_distance_from_source =
-                    foi_95th_percentile_mean_distance_from_source;
-                previous_foi_90th_percentile_mean_distance_from_source =
-                    foi_90th_percentile_mean_distance_from_source;
-                previous_foi_85th_percentile_mean_distance_from_source =
-                    foi_85th_percentile_mean_distance_from_source;
-                previous_foi_80th_percentile_mean_distance_from_source =
-                    foi_80th_percentile_mean_distance_from_source;
-                previous_foi_75th_percentile_mean_distance_from_source =
-                    foi_75th_percentile_mean_distance_from_source;
-                previous_foi_70th_percentile_mean_distance_from_source =
-                    foi_70th_percentile_mean_distance_from_source;
-                previous_foi_65th_percentile_mean_distance_from_source =
-                    foi_65th_percentile_mean_distance_from_source;
-                previous_foi_60th_percentile_mean_distance_from_source =
-                    foi_60th_percentile_mean_distance_from_source;
-                previous_foi_55th_percentile_mean_distance_from_source =
-                    foi_55th_percentile_mean_distance_from_source;
-                previous_foi_50th_percentile_mean_distance_from_source =
-                    foi_50th_percentile_mean_distance_from_source;
-                previous_foi_45th_percentile_mean_distance_from_source =
-                    foi_45th_percentile_mean_distance_from_source;
-                previous_foi_40th_percentile_mean_distance_from_source =
-                    foi_40th_percentile_mean_distance_from_source;
-                previous_foi_35th_percentile_mean_distance_from_source =
-                    foi_35th_percentile_mean_distance_from_source;
-                previous_foi_30th_percentile_mean_distance_from_source =
-                    foi_30th_percentile_mean_distance_from_source;
-                previous_foi_25th_percentile_mean_distance_from_source =
-                    foi_25th_percentile_mean_distance_from_source;
-                previous_foi_20th_percentile_mean_distance_from_source =
-                    foi_20th_percentile_mean_distance_from_source;
-                previous_foi_15th_percentile_mean_distance_from_source =
-                    foi_15th_percentile_mean_distance_from_source;
-                previous_foi_10th_percentile_mean_distance_from_source =
-                    foi_10th_percentile_mean_distance_from_source;
+                let (foi_percentile_means, foi_percentile_mean_distances) =
+                    if positive_foi_values.is_empty() {
+                        ([0.0; PERCENTILE_LEVELS.len()], [0.0; PERCENTILE_LEVELS.len()])
+                    } else {
+                        paired_means_at_or_above_thresholds(
+                            &positive_foi_values,
+                            &positive_foi_distances,
+                            &foi_percentiles,
+                        )
+                    };
+                let foi_spread_rates = spread_rates(
+                    &foi_percentile_mean_distances,
+                    &mut previous_foi_percentile_mean_distances,
+                );
 
                 workbook.write_number(Column::FOIMean.number(), foi_mean)?;
-                workbook.write_number(Column::FOI99thPercentile.number(), foi_99th_percentile)?;
-                workbook.write_number(Column::FOI95thPercentile.number(), foi_95th_percentile)?;
-                workbook.write_number(Column::FOI90thPercentile.number(), foi_90th_percentile)?;
-                workbook.write_number(Column::FOI85thPercentile.number(), foi_85th_percentile)?;
-                workbook.write_number(Column::FOI80thPercentile.number(), foi_80th_percentile)?;
-                workbook.write_number(Column::FOI75thPercentile.number(), foi_75th_percentile)?;
-                workbook.write_number(Column::FOI70thPercentile.number(), foi_70th_percentile)?;
-                workbook.write_number(Column::FOI65thPercentile.number(), foi_65th_percentile)?;
-                workbook.write_number(Column::FOI60thPercentile.number(), foi_60th_percentile)?;
-                workbook.write_number(Column::FOI55thPercentile.number(), foi_55th_percentile)?;
-                workbook.write_number(Column::FOI50thPercentile.number(), foi_50th_percentile)?;
-                workbook.write_number(Column::FOI45thPercentile.number(), foi_45th_percentile)?;
-                workbook.write_number(Column::FOI40thPercentile.number(), foi_40th_percentile)?;
-                workbook.write_number(Column::FOI35thPercentile.number(), foi_35th_percentile)?;
-                workbook.write_number(Column::FOI30thPercentile.number(), foi_30th_percentile)?;
-                workbook.write_number(Column::FOI25thPercentile.number(), foi_25th_percentile)?;
-                workbook.write_number(Column::FOI20thPercentile.number(), foi_20th_percentile)?;
-                workbook.write_number(Column::FOI15thPercentile.number(), foi_15th_percentile)?;
-                workbook.write_number(Column::FOI10thPercentile.number(), foi_10th_percentile)?;
-                workbook.write_number(
-                    Column::FOI99thPercentileMean.number(),
-                    foi_99th_percentile_mean,
+                write_columns(&mut workbook, &FOI_PERCENTILE_COLUMNS, &foi_percentiles)?;
+                write_columns(&mut workbook, &FOI_MEAN_COLUMNS, &foi_percentile_means)?;
+                write_columns(
+                    &mut workbook,
+                    &FOI_MEAN_DISTANCE_COLUMNS,
+                    &foi_percentile_mean_distances,
                 )?;
-                workbook.write_number(
-                    Column::FOI95thPercentileMean.number(),
-                    foi_95th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI90thPercentileMean.number(),
-                    foi_90th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI85thPercentileMean.number(),
-                    foi_85th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI80thPercentileMean.number(),
-                    foi_80th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI75thPercentileMean.number(),
-                    foi_75th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI70thPercentileMean.number(),
-                    foi_70th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI65thPercentileMean.number(),
-                    foi_65th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI60thPercentileMean.number(),
-                    foi_60th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI55thPercentileMean.number(),
-                    foi_55th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI50thPercentileMean.number(),
-                    foi_50th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI45thPercentileMean.number(),
-                    foi_45th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI40thPercentileMean.number(),
-                    foi_40th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI35thPercentileMean.number(),
-                    foi_35th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI30thPercentileMean.number(),
-                    foi_30th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI25thPercentileMean.number(),
-                    foi_25th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI20thPercentileMean.number(),
-                    foi_20th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI15thPercentileMean.number(),
-                    foi_15th_percentile_mean,
-                )?;
-                workbook.write_number(
-                    Column::FOI10thPercentileMean.number(),
-                    foi_10th_percentile_mean,
-                )?;
-
-                workbook.write_number(
-                    Column::FOI99thPercentileMeanDistanceMeters.number(),
-                    foi_99th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI95thPercentileMeanDistanceMeters.number(),
-                    foi_95th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI90thPercentileMeanDistanceMeters.number(),
-                    foi_90th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI85thPercentileMeanDistanceMeters.number(),
-                    foi_85th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI80thPercentileMeanDistanceMeters.number(),
-                    foi_80th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI75thPercentileMeanDistanceMeters.number(),
-                    foi_75th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI70thPercentileMeanDistanceMeters.number(),
-                    foi_70th_percentile_mean_distance_from_source,
-                )?;
-
-                workbook.write_number(
-                    Column::FOI65thPercentileMeanDistanceMeters.number(),
-                    foi_65th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI60thPercentileMeanDistanceMeters.number(),
-                    foi_60th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI55thPercentileMeanDistanceMeters.number(),
-                    foi_55th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI50thPercentileMeanDistanceMeters.number(),
-                    foi_50th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI45thPercentileMeanDistanceMeters.number(),
-                    foi_45th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI40thPercentileMeanDistanceMeters.number(),
-                    foi_40th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI35thPercentileMeanDistanceMeters.number(),
-                    foi_35th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI30thPercentileMeanDistanceMeters.number(),
-                    foi_30th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI25thPercentileMeanDistanceMeters.number(),
-                    foi_25th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI20thPercentileMeanDistanceMeters.number(),
-                    foi_20th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI15thPercentileMeanDistanceMeters.number(),
-                    foi_15th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI10thPercentileMeanDistanceMeters.number(),
-                    foi_10th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::FOI99thPercentileSpreadMetersPerYear.number(),
-                    foi_99th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI95thPercentileSpreadMetersPerYear.number(),
-                    foi_95th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI90thPercentileSpreadMetersPerYear.number(),
-                    foi_90th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI85thPercentileSpreadMetersPerYear.number(),
-                    foi_85th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI80thPercentileSpreadMetersPerYear.number(),
-                    foi_80th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI75thPercentileSpreadMetersPerYear.number(),
-                    foi_75th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI70thPercentileSpreadMetersPerYear.number(),
-                    foi_70th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI65thPercentileSpreadMetersPerYear.number(),
-                    foi_65th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI60thPercentileSpreadMetersPerYear.number(),
-                    foi_60th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI55thPercentileSpreadMetersPerYear.number(),
-                    foi_55th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI50thPercentileSpreadMetersPerYear.number(),
-                    foi_50th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI45thPercentileSpreadMetersPerYear.number(),
-                    foi_45th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI40thPercentileSpreadMetersPerYear.number(),
-                    foi_40th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI35thPercentileSpreadMetersPerYear.number(),
-                    foi_35th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI30thPercentileSpreadMetersPerYear.number(),
-                    foi_30th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI25thPercentileSpreadMetersPerYear.number(),
-                    foi_25th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI20thPercentileSpreadMetersPerYear.number(),
-                    foi_20th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI15thPercentileSpreadMetersPerYear.number(),
-                    foi_15th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::FOI10thPercentileSpreadMetersPerYear.number(),
-                    foi_10th_percentile_spread_rate_mpy,
-                )?;
+                write_columns(&mut workbook, &FOI_SPREAD_COLUMNS, &foi_spread_rates)?;
                 let cfg = GridRenderConfig::default();
                 let normalized: Vec<f64> = foi
                     .data
@@ -2280,26 +1974,6 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             }
 
             if let Some(infection) = &state.infection {
-                let infection_distances =
-                    distances_from_infection_source_1_indexed
-                        .iter()
-                        .filter(|&(coordinates, _)| {
-                            infection
-                                .infected_sites
-                                .contains(&(coordinates.0 as u32, coordinates.1 as u32))
-                        });
-                /* let infection_distances = {
-                    let mut map: HashMap<(usize, usize), f64> = HashMap::new();
-                    for &(x, y) in infection.infected_sites.iter() {
-                        let site = (x as usize, y as usize);
-                        if let Some(distance) = distances_from_infection_source_1_indexed.get(&site)
-                        {
-                            map.insert(site, *distance);
-                        }
-                    }
-                    map
-                }; */
-
                 let total_number_of_infected_sites = infection.infected_sites.len();
                 let newly_infected_sites = if infection.infected_sites.len()
                     >= previous_number_of_infected_sites
@@ -2324,296 +1998,37 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                 let infected_area = infection.infected_sites.len() as f64
                     / (width as usize * height as usize) as f64;
 
-                let values = infection_distances
-                    .clone()
-                    .map(|(_, distance)| *distance)
-                    .collect::<Vec<f64>>();
-                let (
-                    infection_99th_percentile_distance,
-                    infection_95th_percentile_distance,
-                    infection_90th_percentile_distance,
-                    infection_85th_percentile_distance,
-                    infection_80th_percentile_distance,
-                    infection_75th_percentile_distance,
-                    infection_70th_percentile_distance,
-                    infection_65th_percentile_distance,
-                    infection_60th_percentile_distance,
-                    infection_55th_percentile_distance,
-                    infection_50th_percentile_distance,
-                    infection_45th_percentile_distance,
-                    infection_40th_percentile_distance,
-                    infection_35th_percentile_distance,
-                    infection_30th_percentile_distance,
-                    infection_25th_percentile_distance,
-                    infection_20th_percentile_distance,
-                    infection_15th_percentile_distance,
-                    infection_10th_percentile_distance,
-                ) = if values.len() > 0 {
-                    (
-                        percentile_nearest(&values, 0.99)?,
-                        percentile_nearest(&values, 0.95)?,
-                        percentile_nearest(&values, 0.90)?,
-                        percentile_nearest(&values, 0.85)?,
-                        percentile_nearest(&values, 0.80)?,
-                        percentile_nearest(&values, 0.75)?,
-                        percentile_nearest(&values, 0.70)?,
-                        percentile_nearest(&values, 0.65)?,
-                        percentile_nearest(&values, 0.60)?,
-                        percentile_nearest(&values, 0.55)?,
-                        percentile_nearest(&values, 0.50)?,
-                        percentile_nearest(&values, 0.45)?,
-                        percentile_nearest(&values, 0.40)?,
-                        percentile_nearest(&values, 0.35)?,
-                        percentile_nearest(&values, 0.30)?,
-                        percentile_nearest(&values, 0.25)?,
-                        percentile_nearest(&values, 0.20)?,
-                        percentile_nearest(&values, 0.15)?,
-                        percentile_nearest(&values, 0.10)?,
-                    )
+                let mut values = Vec::with_capacity(infection.infected_sites.len());
+                for &(x, y) in infection.infected_sites.iter() {
+                    if x == 0 || y == 0 {
+                        continue;
+                    }
+
+                    let gx = x as usize - 1;
+                    let gy = y as usize - 1;
+                    if gx >= width as usize || gy >= height as usize {
+                        continue;
+                    }
+
+                    let distance = distances_from_infection_source_1_indexed
+                        [coordinates_to_index(gx, gy, width as usize)];
+                    if distance > 0.0 {
+                        values.push(distance);
+                    }
+                }
+
+                let infection_percentiles = if values.is_empty() {
+                    [0.0; PERCENTILE_LEVELS.len()]
                 } else {
-                    (
-                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                        0.0, 0.0, 0.0, 0.0,
-                    )
+                    nearest_percentiles(&values)?
                 };
-
                 let infection_mean_distance_from_source = mean_kahan(values.iter());
-
-                let infection_99th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_99th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-
-                let infection_95th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_95th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-
-                let infection_90th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_90th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_85th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_85th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-
-                let infection_80th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_80th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-
-                let infection_75th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_75th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-
-                let infection_70th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_70th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_65th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_65th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_60th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_60th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_55th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_55th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_50th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_50th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_45th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_45th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_40th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_40th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_35th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_35th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_30th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_30th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_25th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_25th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_20th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_20th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_15th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_15th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-                let infection_10th_percentile_mean_distance_from_source = {
-                    let iter = infection_distances
-                        .clone()
-                        .filter(|(_, distance)| *distance >= &infection_10th_percentile_distance)
-                        .map(|t| t.1);
-                    mean_kahan(iter)
-                };
-
-                let infection_99th_percentile_spread_rate_mpy =
-                    infection_99th_percentile_mean_distance_from_source
-                        - previous_infection_99th_percentile_mean_distance_from_source;
-                let infection_95th_percentile_spread_rate_mpy =
-                    infection_95th_percentile_mean_distance_from_source
-                        - previous_infection_95th_percentile_mean_distance_from_source;
-                let infection_90th_percentile_spread_rate_mpy =
-                    infection_90th_percentile_mean_distance_from_source
-                        - previous_infection_90th_percentile_mean_distance_from_source;
-                let infection_85th_percentile_spread_rate_mpy =
-                    infection_85th_percentile_mean_distance_from_source
-                        - previous_infection_85th_percentile_mean_distance_from_source;
-                let infection_80th_percentile_spread_rate_mpy =
-                    infection_80th_percentile_mean_distance_from_source
-                        - previous_infection_80th_percentile_mean_distance_from_source;
-                let infection_75th_percentile_spread_rate_mpy =
-                    infection_75th_percentile_mean_distance_from_source
-                        - previous_infection_75th_percentile_mean_distance_from_source;
-                let infection_70th_percentile_spread_rate_mpy =
-                    infection_70th_percentile_mean_distance_from_source
-                        - previous_infection_70th_percentile_mean_distance_from_source;
-                let infection_65th_percentile_spread_rate_mpy =
-                    infection_65th_percentile_mean_distance_from_source
-                        - previous_infection_65th_percentile_mean_distance_from_source;
-                let infection_60th_percentile_spread_rate_mpy =
-                    infection_60th_percentile_mean_distance_from_source
-                        - previous_infection_60th_percentile_mean_distance_from_source;
-                let infection_55th_percentile_spread_rate_mpy =
-                    infection_55th_percentile_mean_distance_from_source
-                        - previous_infection_55th_percentile_mean_distance_from_source;
-                let infection_50th_percentile_spread_rate_mpy =
-                    infection_50th_percentile_mean_distance_from_source
-                        - previous_infection_50th_percentile_mean_distance_from_source;
-                let infection_45th_percentile_spread_rate_mpy =
-                    infection_45th_percentile_mean_distance_from_source
-                        - previous_infection_45th_percentile_mean_distance_from_source;
-                let infection_40th_percentile_spread_rate_mpy =
-                    infection_40th_percentile_mean_distance_from_source
-                        - previous_infection_40th_percentile_mean_distance_from_source;
-                let infection_35th_percentile_spread_rate_mpy =
-                    infection_35th_percentile_mean_distance_from_source
-                        - previous_infection_35th_percentile_mean_distance_from_source;
-                let infection_30th_percentile_spread_rate_mpy =
-                    infection_30th_percentile_mean_distance_from_source
-                        - previous_infection_30th_percentile_mean_distance_from_source;
-                let infection_25th_percentile_spread_rate_mpy =
-                    infection_25th_percentile_mean_distance_from_source
-                        - previous_infection_25th_percentile_mean_distance_from_source;
-                let infection_20th_percentile_spread_rate_mpy =
-                    infection_20th_percentile_mean_distance_from_source
-                        - previous_infection_20th_percentile_mean_distance_from_source;
-                let infection_15th_percentile_spread_rate_mpy =
-                    infection_15th_percentile_mean_distance_from_source
-                        - previous_infection_15th_percentile_mean_distance_from_source;
-                let infection_10th_percentile_spread_rate_mpy =
-                    infection_10th_percentile_mean_distance_from_source
-                        - previous_infection_10th_percentile_mean_distance_from_source;
-
-                previous_infection_99th_percentile_mean_distance_from_source =
-                    infection_99th_percentile_mean_distance_from_source;
-                previous_infection_95th_percentile_mean_distance_from_source =
-                    infection_95th_percentile_mean_distance_from_source;
-                previous_infection_90th_percentile_mean_distance_from_source =
-                    infection_90th_percentile_mean_distance_from_source;
-                previous_infection_85th_percentile_mean_distance_from_source =
-                    infection_85th_percentile_mean_distance_from_source;
-                previous_infection_80th_percentile_mean_distance_from_source =
-                    infection_80th_percentile_mean_distance_from_source;
-                previous_infection_75th_percentile_mean_distance_from_source =
-                    infection_75th_percentile_mean_distance_from_source;
-                previous_infection_70th_percentile_mean_distance_from_source =
-                    infection_70th_percentile_mean_distance_from_source;
-                previous_infection_65th_percentile_mean_distance_from_source =
-                    infection_65th_percentile_mean_distance_from_source;
-                previous_infection_60th_percentile_mean_distance_from_source =
-                    infection_60th_percentile_mean_distance_from_source;
-                previous_infection_55th_percentile_mean_distance_from_source =
-                    infection_55th_percentile_mean_distance_from_source;
-                previous_infection_50th_percentile_mean_distance_from_source =
-                    infection_50th_percentile_mean_distance_from_source;
-                previous_infection_45th_percentile_mean_distance_from_source =
-                    infection_45th_percentile_mean_distance_from_source;
-                previous_infection_40th_percentile_mean_distance_from_source =
-                    infection_40th_percentile_mean_distance_from_source;
-                previous_infection_35th_percentile_mean_distance_from_source =
-                    infection_35th_percentile_mean_distance_from_source;
-                previous_infection_30th_percentile_mean_distance_from_source =
-                    infection_30th_percentile_mean_distance_from_source;
-                previous_infection_25th_percentile_mean_distance_from_source =
-                    infection_25th_percentile_mean_distance_from_source;
-                previous_infection_20th_percentile_mean_distance_from_source =
-                    infection_20th_percentile_mean_distance_from_source;
-                previous_infection_15th_percentile_mean_distance_from_source =
-                    infection_15th_percentile_mean_distance_from_source;
-                previous_infection_10th_percentile_mean_distance_from_source =
-                    infection_10th_percentile_mean_distance_from_source;
+                let infection_percentile_mean_distances =
+                    means_at_or_above_thresholds(&values, &infection_percentiles);
+                let infection_spread_rates = spread_rates(
+                    &infection_percentile_mean_distances,
+                    &mut previous_infection_percentile_mean_distances,
+                );
 
                 let newly_infected_sites_change =
                     newly_infected_sites as f64 - previous_newly_infected_sites as f64;
@@ -2850,234 +2265,13 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
                     Column::InfectedAreaChangeSquareMetersMod.number(),
                     infection_area_change_modifier,
                 )?;
-                workbook.write_number(
-                    Column::Inf99thPercentile.number(),
-                    infection_99th_percentile_distance,
+                write_columns(&mut workbook, &INF_PERCENTILE_COLUMNS, &infection_percentiles)?;
+                write_columns(
+                    &mut workbook,
+                    &INF_MEAN_DISTANCE_COLUMNS,
+                    &infection_percentile_mean_distances,
                 )?;
-                workbook.write_number(
-                    Column::Inf95thPercentile.number(),
-                    infection_95th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf90thPercentile.number(),
-                    infection_90th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf85thPercentile.number(),
-                    infection_85th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf80thPercentile.number(),
-                    infection_80th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf75thPercentile.number(),
-                    infection_75th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf70thPercentile.number(),
-                    infection_70th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf65thPercentile.number(),
-                    infection_65th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf60thPercentile.number(),
-                    infection_60th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf55thPercentile.number(),
-                    infection_55th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf50thPercentile.number(),
-                    infection_50th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf45thPercentile.number(),
-                    infection_45th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf40thPercentile.number(),
-                    infection_40th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf35thPercentile.number(),
-                    infection_35th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf30thPercentile.number(),
-                    infection_30th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf25thPercentile.number(),
-                    infection_25th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf20thPercentile.number(),
-                    infection_20th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf15thPercentile.number(),
-                    infection_15th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf10thPercentile.number(),
-                    infection_10th_percentile_distance,
-                )?;
-                workbook.write_number(
-                    Column::Inf99thPercentileMeanDistanceMeters.number(),
-                    infection_99th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf95thPercentileMeanDistanceMeters.number(),
-                    infection_95th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf90thPercentileMeanDistanceMeters.number(),
-                    infection_90th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf85thPercentileMeanDistanceMeters.number(),
-                    infection_85th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf80thPercentileMeanDistanceMeters.number(),
-                    infection_80th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf75thPercentileMeanDistanceMeters.number(),
-                    infection_75th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf70thPercentileMeanDistanceMeters.number(),
-                    infection_70th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf65thPercentileMeanDistanceMeters.number(),
-                    infection_65th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf60thPercentileMeanDistanceMeters.number(),
-                    infection_60th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf55thPercentileMeanDistanceMeters.number(),
-                    infection_55th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf50thPercentileMeanDistanceMeters.number(),
-                    infection_50th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf45thPercentileMeanDistanceMeters.number(),
-                    infection_45th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf40thPercentileMeanDistanceMeters.number(),
-                    infection_40th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf35thPercentileMeanDistanceMeters.number(),
-                    infection_35th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf30thPercentileMeanDistanceMeters.number(),
-                    infection_30th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf25thPercentileMeanDistanceMeters.number(),
-                    infection_25th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf20thPercentileMeanDistanceMeters.number(),
-                    infection_20th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf15thPercentileMeanDistanceMeters.number(),
-                    infection_15th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf10thPercentileMeanDistanceMeters.number(),
-                    infection_10th_percentile_mean_distance_from_source,
-                )?;
-                workbook.write_number(
-                    Column::Inf99thPercentileSpreadMetersPerYear.number(),
-                    infection_99th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf95thPercentileSpreadMetersPerYear.number(),
-                    infection_95th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf90thPercentileSpreadMetersPerYear.number(),
-                    infection_90th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf85thPercentileSpreadMetersPerYear.number(),
-                    infection_85th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf80thPercentileSpreadMetersPerYear.number(),
-                    infection_80th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf75thPercentileSpreadMetersPerYear.number(),
-                    infection_75th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf70thPercentileSpreadMetersPerYear.number(),
-                    infection_70th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf65thPercentileSpreadMetersPerYear.number(),
-                    infection_65th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf60thPercentileSpreadMetersPerYear.number(),
-                    infection_60th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf55thPercentileSpreadMetersPerYear.number(),
-                    infection_55th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf50thPercentileSpreadMetersPerYear.number(),
-                    infection_50th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf45thPercentileSpreadMetersPerYear.number(),
-                    infection_45th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf40thPercentileSpreadMetersPerYear.number(),
-                    infection_40th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf35thPercentileSpreadMetersPerYear.number(),
-                    infection_35th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf30thPercentileSpreadMetersPerYear.number(),
-                    infection_30th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf25thPercentileSpreadMetersPerYear.number(),
-                    infection_25th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf20thPercentileSpreadMetersPerYear.number(),
-                    infection_20th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf15thPercentileSpreadMetersPerYear.number(),
-                    infection_15th_percentile_spread_rate_mpy,
-                )?;
-                workbook.write_number(
-                    Column::Inf10thPercentileSpreadMetersPerYear.number(),
-                    infection_10th_percentile_spread_rate_mpy,
-                )?;
+                write_columns(&mut workbook, &INF_SPREAD_COLUMNS, &infection_spread_rates)?;
             }
 
             if let Some(mortality) = &state.mortality {
@@ -3152,6 +2346,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             workbook.write_number(Column::Timestep.number(), state.timestep as f64)?;
             ROW_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
         }
+        progress.finish();
 
         if img_time_count > 0 {
             let avg = img_time_sum_ms as f64 / img_time_count as f64;
